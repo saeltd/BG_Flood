@@ -480,7 +480,7 @@ template __global__ void AddrainforcingGPU<double>(Param XParam, BlockP<double> 
  * @param Rain Rainfall dynamic forcing structure
  * @param XEv Evolving data structure
  */
-template <class T> __global__ void AddrainforcingImplicitGPU(Param XParam, Loop<T> XLoop, BlockP<T> XBlock, DynForcingP<float> Rain, EvolvingP<T> XEv)
+template <class T> __global__ void AddrainforcingImplicitGPU(Param XParam, Loop<T> XLoop, BlockP<T> XBlock, DynForcingP<float> Rain, EvolvingP<T> XEv, T* cumrain)
 {
 	unsigned int halowidth = XParam.halowidth;
 	unsigned int blkmemwidth = blockDim.x + halowidth * 2;
@@ -510,20 +510,24 @@ template <class T> __global__ void AddrainforcingImplicitGPU(Param XParam, Loop<
 	}
 
 	
-	Rainhh = max(Rainhh / T(1000.0) / T(3600.0) * T(XLoop.dt), T(0.0)) * XBlock.activeCell[i]; // convert from mm/hrs to m/s and 
+	Rainhh = max(Rainhh / T(1000.0) / T(3600.0) * T(XLoop.dt), T(0.0)) * XBlock.activeCell[i]; // convert from mm/hrs to m/s and
 	//printf("%f\n", Rainhh);
 	T qvol = hi / (hi + Rainhh);
 
 	XEv.h[i] = hi + Rainhh;
 	XEv.zs[i] += Rainhh;
+	if (XParam.massbalance > 0)
+	{
+		cumrain[i] += Rainhh; // rain actually added, for the volume balance
+	}
 	if (hi > XParam.eps)
 	{
 		//XEv.u[i] = XEv.u[i] * qvol;
 		//XEv.v[i] = XEv.v[i] * qvol;
 	}
 }
-template __global__ void AddrainforcingImplicitGPU<float>(Param XParam, Loop<float> XLoop, BlockP<float> XBlock, DynForcingP<float> Rain, EvolvingP<float> XEv);
-template __global__ void AddrainforcingImplicitGPU<double>(Param XParam, Loop<double> XLoop, BlockP<double> XBlock, DynForcingP<float> Rain, EvolvingP<double> XEv);
+template __global__ void AddrainforcingImplicitGPU<float>(Param XParam, Loop<float> XLoop, BlockP<float> XBlock, DynForcingP<float> Rain, EvolvingP<float> XEv, float* cumrain);
+template __global__ void AddrainforcingImplicitGPU<double>(Param XParam, Loop<double> XLoop, BlockP<double> XBlock, DynForcingP<float> Rain, EvolvingP<double> XEv, double* cumrain);
 
 /**
  * @brief Add rainfall forcing to the model on the CPU.
@@ -590,7 +594,7 @@ template __host__ void AddrainforcingCPU<double>(Param XParam, BlockP<double> XB
  * @param Rain Rainfall dynamic forcing structure
  * @param XEv Evolving data structure
  */
-template <class T> __host__ void AddrainforcingImplicitCPU(Param XParam, Loop<T> XLoop, BlockP<T> XBlock, DynForcingP<float> Rain, EvolvingP<T> XEv)
+template <class T> __host__ void AddrainforcingImplicitCPU(Param XParam, Loop<T> XLoop, BlockP<T> XBlock, DynForcingP<float> Rain, EvolvingP<T> XEv, T* cumrain)
 {
 	int ib;
 	int halowidth = XParam.halowidth;
@@ -632,6 +636,10 @@ template <class T> __host__ void AddrainforcingImplicitCPU(Param XParam, Loop<T>
 
 				XEv.h[i] = hi + Rainhh;
 				XEv.zs[i] += Rainhh;
+				if (XParam.massbalance > 0)
+				{
+					cumrain[i] += Rainhh; // rain actually added, for the volume balance
+				}
 
 				if (hi > XParam.eps)
 				{
@@ -642,8 +650,8 @@ template <class T> __host__ void AddrainforcingImplicitCPU(Param XParam, Loop<T>
 		}
 	}
 }
-template __host__ void AddrainforcingImplicitCPU<float>(Param XParam, Loop<float> XLoop, BlockP<float> XBlock, DynForcingP<float> Rain, EvolvingP<float> XEv);
-template __host__ void AddrainforcingImplicitCPU<double>(Param XParam, Loop<double> XLoop, BlockP<double> XBlock, DynForcingP<float> Rain, EvolvingP<double> XEv);
+template __host__ void AddrainforcingImplicitCPU<float>(Param XParam, Loop<float> XLoop, BlockP<float> XBlock, DynForcingP<float> Rain, EvolvingP<float> XEv, float* cumrain);
+template __host__ void AddrainforcingImplicitCPU<double>(Param XParam, Loop<double> XLoop, BlockP<double> XBlock, DynForcingP<float> Rain, EvolvingP<double> XEv, double* cumrain);
 
 /**
  * @brief Add infiltration forcing to the model implicitly on the CPU.

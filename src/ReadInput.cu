@@ -490,6 +490,13 @@ Param readparamstr(std::string line, Param param)
 
 	}
 
+	parameterstr = "massbalance";
+	parametervalue = findparameter(parameterstr, line);
+	if (!parametervalue.empty())
+	{
+		param.massbalance = std::stoi(parametervalue);
+	}
+
 
 	// Below is a bit more complex than usual because more than 1 node can be outputed as a timeseries
 	paramvec = { "TSnodesout","TSOutput" };

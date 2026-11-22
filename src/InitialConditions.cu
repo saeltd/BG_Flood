@@ -115,6 +115,11 @@ template <class T> void InitialConditions(Param &XParam, Forcing<float> &XForcin
 		initinfiltration(XParam, XModel.blocks, XModel.evolv.h, XModel.il, XModel.hgw);
 	}
 
+	if (XParam.massbalance > 0)
+	{
+		InitArrayBUQ(XParam, XModel.blocks, T(0.0), XModel.cumrain);
+	}
+
 	//=====================================
 	// Initialize output variables
 	initoutput(XParam, XModel);

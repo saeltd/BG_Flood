@@ -26,7 +26,10 @@ template <class T> void MainLoop(Param &XParam, Forcing<float> XForcing, Model<T
 
 	// Check for map output (output initialisation if needed)
 	mapoutput(XParam, XLoop, XModel, XModel_g);
-	
+
+	// Volume balance: water on the grid at the start
+	VolumeBalance(XParam, XLoop, XForcing, XModel, XModel_g);
+
 	log("\t\tCompleted");
 	log("Model Running...");
 
@@ -55,8 +58,18 @@ template <class T> void MainLoop(Param &XParam, Forcing<float> XForcing, Model<T
 		{
 			FlowCPU(XParam, XLoop, XForcing, XModel);
 		}
-		
-				
+
+		// River inflow over this step, for the volume balance (qnow is per unit discharge area)
+		if (XParam.massbalance > 0)
+		{
+			Model<T>& XMr = (XParam.GPUDEVICE >= 0) ? XModel_g : XModel;
+			for (int r = 0; r < XForcing.rivers.size(); r++)
+			{
+				XLoop.volriver += double(XMr.bndblk.Riverinfo.qnow[r]) * XForcing.rivers[r].disarea * XLoop.dt;
+			}
+		}
+
+
 		// Time keeping
 		XLoop.totaltime = XLoop.totaltime + XLoop.dt;
 		//log("timestep = " + std::to_string(XLoop.totaltime));
@@ -76,21 +89,171 @@ template <class T> void MainLoop(Param &XParam, Forcing<float> XForcing, Model<T
 		// Check for map output
 		mapoutput(XParam, XLoop, XModel, XModel_g);
 
+		// Volume balance at each map output (mapoutput resets nstepout when it writes)
+		if (XLoop.nstepout == 0)
+		{
+			VolumeBalance(XParam, XLoop, XForcing, XModel, XModel_g);
+		}
+
 		// Reset mean/Max if needed
 		resetmeanmax(XParam, XLoop, XModel, XModel_g);
 
-		
+
 
 
 		printstatus(XLoop.totaltime, XLoop.dt);
 	}
-	
 
-	
+
+
 
 }
 template void MainLoop<float>(Param& XParam, Forcing<float> XForcing, Model<float>& XModel, Model<float>& XModel_g);
 template void MainLoop<double>(Param& XParam, Forcing<float> XForcing, Model<double>& XModel, Model<double>& XModel_g);
+
+
+/**
+ * @brief Integral of a piecewise-linear time series between two times, holding the end values outside it.
+ * @param d Series (time in s, value in mm/h for rain)
+ * @param t0 Start time (s)
+ * @param t1 End time (s)
+ * @return Integral of value x time (value units x s)
+ */
+double SeriesIntegral(std::vector<Windin>& d, double t0, double t1)
+{
+	if (d.empty() || t1 <= t0)
+	{
+		return 0.0;
+	}
+	auto val = [&](double t) {
+		if (t <= d.front().time) return double(d.front().wspeed);
+		if (t >= d.back().time) return double(d.back().wspeed);
+		int k = 1;
+		while (d[k].time < t) k++;
+		double a = (t - d[k - 1].time) / (d[k].time - d[k - 1].time);
+		return double(d[k - 1].wspeed) + a * (double(d[k].wspeed) - double(d[k - 1].wspeed));
+	};
+	std::vector<double> knots = { t0 };
+	for (int k = 0; k < d.size(); k++)
+	{
+		if (d[k].time > t0 && d[k].time < t1)
+		{
+			knots.push_back(d[k].time);
+		}
+	}
+	knots.push_back(t1);
+	double s = 0.0;
+	for (int k = 1; k < knots.size(); k++)
+	{
+		s += 0.5 * (val(knots[k - 1]) + val(knots[k])) * (knots[k] - knots[k - 1]);
+	}
+	return s;
+}
+
+
+/**
+ * @brief Volume balance of the run so far, written to BG_log (Param massbalance).
+ * Storage (h x cell area over the active blocks), rain actually added (cumrain), river inflow (Loop volriver), losses
+ * (hgw on cells where losses act), and the remainder: water that left through open boundaries plus any mass error.
+ * In a closed domain (all boundary segments walls) the remainder is the mass error. For uniform rain it also gives
+ * the rain in the series over the rain area: a difference shows rain lost or gained by time stepping (a step
+ * straddling a change in rain rate). Fixed mesh only (per-cell totals are not remapped on refinement).
+ * The first call records the storage at the start.
+ * @return The balance (valid = false if switched off)
+ */
+template <class T> VolBalance VolumeBalance(Param& XParam, Loop<T>& XLoop, Forcing<float>& XForcing, Model<T>& XModel, Model<T>& XModel_g)
+{
+	VolBalance vb;
+	if (XParam.massbalance <= 0)
+	{
+		return vb;
+	}
+	if (LastVolBalance.valid && XLoop.volstart >= 0.0 && LastVolBalance.t == double(XLoop.totaltime))
+	{
+		return LastVolBalance; // BG writes the last map output twice; log its balance once
+	}
+	if (XParam.spherical || XParam.maxlevel != XParam.minlevel)
+	{
+		log("Volume balance: not available with spherical coordinates or grid refinement; switched off.");
+		XParam.massbalance = 0;
+		return vb;
+	}
+
+	size_t nbytes = size_t(XParam.nblkmem) * size_t(XParam.blksize) * sizeof(T);
+	if (XParam.GPUDEVICE >= 0)
+	{
+		CUDA_CHECK(cudaMemcpy(XModel.evolv.h, XModel_g.evolv.h, nbytes, cudaMemcpyDeviceToHost));
+		CUDA_CHECK(cudaMemcpy(XModel.cumrain, XModel_g.cumrain, nbytes, cudaMemcpyDeviceToHost));
+		if (XParam.infiltration)
+		{
+			CUDA_CHECK(cudaMemcpy(XModel.hgw, XModel_g.hgw, nbytes, cudaMemcpyDeviceToHost));
+		}
+	}
+
+	bool hasrain = !XForcing.Rain.inputfile.empty();
+	for (int ibl = 0; ibl < XParam.nblk; ibl++)
+	{
+		int ib = XModel.blocks.active[ibl];
+		double delta = calcres(XParam.dx, XModel.blocks.level[ib]);
+		double A = delta * delta;
+		for (int iy = 0; iy < XParam.blkwidth; iy++)
+		{
+			for (int ix = 0; ix < XParam.blkwidth; ix++)
+			{
+				int i = memloc(XParam, ix, iy, ib);
+				double act = double(XModel.blocks.activeCell[i]);
+				vb.storage += double(XModel.evolv.h[i]) * A;
+				vb.rainarea += act * A;
+				if (hasrain)
+				{
+					vb.rain += double(XModel.cumrain[i]) * A;
+				}
+				if (XParam.infiltration)
+				{
+					vb.loss += act * double(XModel.hgw[i]) * A; // hgw also grows on cells where losses are not applied
+				}
+			}
+		}
+	}
+	if (XLoop.volstart < 0.0)
+	{
+		XLoop.volstart = vb.storage;
+	}
+	vb.t = XLoop.totaltime;
+	vb.start = XLoop.volstart;
+	vb.river = XLoop.volriver;
+	if (hasrain && XForcing.Rain.uniform)
+	{
+		vb.rainseries = SeriesIntegral(XForcing.Rain.unidata, XParam.inittime, XLoop.totaltime) / 1000.0 / 3600.0 * vb.rainarea;
+	}
+	vb.closed = true;
+	for (int s = 0; s < XForcing.bndseg.size(); s++)
+	{
+		if (XForcing.bndseg[s].type != 0 && (XForcing.bndseg[s].left.nblk + XForcing.bndseg[s].right.nblk + XForcing.bndseg[s].top.nblk + XForcing.bndseg[s].bot.nblk) > 0)
+		{
+			vb.closed = false;
+		}
+	}
+	vb.residual = vb.start + vb.rain + vb.river - vb.loss - vb.storage;
+	vb.valid = true;
+
+	double inputs = vb.rain + vb.river;
+	char buf[640];
+	std::string rs = "";
+	if (vb.rainseries >= 0.0)
+	{
+		snprintf(buf, sizeof(buf), " (series %.3f m3 over %.1f m2: %+.3f %%)", vb.rainseries, vb.rainarea, vb.rainseries > 0.0 ? 100.0 * (vb.rain - vb.rainseries) / vb.rainseries : 0.0);
+		rs = buf;
+	}
+	snprintf(buf, sizeof(buf), "Volume balance t = %.1f s: storage %.3f m3 (start %.3f); rain applied %.3f m3%s; river in %.3f m3; losses %.3f m3; %s %.3f m3 (%.4f %% of rain + river)",
+		vb.t, vb.storage, vb.start, vb.rain, rs.c_str(), vb.river, vb.loss, vb.closed ? "mass error (closed domain)" : "out through boundaries + mass error", vb.residual, inputs > 0.0 ? 100.0 * vb.residual / inputs : 0.0);
+	log(std::string(buf));
+	LastVolBalance = vb;
+	return vb;
+}
+VolBalance LastVolBalance;
+template VolBalance VolumeBalance<float>(Param& XParam, Loop<float>& XLoop, Forcing<float>& XForcing, Model<float>& XModel, Model<float>& XModel_g);
+template VolBalance VolumeBalance<double>(Param& XParam, Loop<double>& XLoop, Forcing<float>& XForcing, Model<double>& XModel, Model<double>& XModel_g);
 
 
 

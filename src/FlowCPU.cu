@@ -245,7 +245,7 @@ template <class T> void FlowCPU(Param XParam, Loop<T>& XLoop,Forcing<float> XFor
 
 	if (!XForcing.Rain.inputfile.empty())
 	{
-		AddrainforcingImplicitCPU(XParam, XLoop, XModel.blocks, XForcing.Rain, XModel.evolv);
+		AddrainforcingImplicitCPU(XParam, XLoop, XModel.blocks, XForcing.Rain, XModel.evolv, XModel.cumrain);
 	}
 
 	if (XParam.infiltration)
@@ -406,7 +406,7 @@ template <class T> void HalfStepCPU(Param XParam, Loop<T>& XLoop, Forcing<float>
 
 	if (!XForcing.Rain.inputfile.empty())
 	{
-		AddrainforcingImplicitCPU(XParam, XLoop, XModel.blocks, XForcing.Rain, XModel.evolv);
+		AddrainforcingImplicitCPU(XParam, XLoop, XModel.blocks, XForcing.Rain, XModel.evolv, XModel.cumrain);
 	}
   if (XParam.infiltration)
 	{
