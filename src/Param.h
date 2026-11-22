@@ -83,6 +83,8 @@ public:
 	double inittime = 0.0; // Initital model time. At start of simulation inittime==totaltime
 	double dtinit = -1; // Maximum initial time steps in s (should be positive, advice 0.1 if dry domain initialement) 
 	double dtmin = 0.0005; //Minimum accepted time steps in s (a lower value will be concidered a crash of the code, and stop the run)
+	double dtmax = 0.0; // Maximum time step in s (0.0 = no limit). On a dry or nearly dry domain the step otherwise grows by 1.5x per step without bound
+	int dtforcing = 1; // 1: end time steps on the breakpoints of rain and river time series and sample them at mid-step, so the forcing volume is exact; 0: sample at the start of the step (behaviour up to v1.01)
 	std::string reftime = ""; // Reference time string as yyyy-mm-ddTHH:MM:SS
 	std::string crs_ref = "no_crs"; //crs reference string 
 	//"PROJCS[\"NZGD2000 / New Zealand Transverse Mercator 2000\",GEOGCS[\"NZGD2000\",DATUM[\"New_Zealand_Geodetic_Datum_2000\",SPHEROID[\"GRS 1980\",6378137,298.257222101]],PRIMEM[\"Greenwich\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AUTHORITY[\"EPSG\",\"4167\"]],PROJECTION[\"Transverse_Mercator\"],PARAMETER[\"latitude_of_origin\",0],PARAMETER[\"central_meridian\",173],PARAMETER[\"scale_factor\",0.9996],PARAMETER[\"false_easting\",1600000],PARAMETER[\"false_northing\",10000000],UNIT[\"metre\",1],AXIS[\"Northing\",NORTH],AXIS[\"Easting\",EAST],AUTHORITY[\"EPSG\",\"2193\"]]";

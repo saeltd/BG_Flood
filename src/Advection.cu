@@ -500,6 +500,34 @@ template __host__ float timestepreductionCPU(Param XParam, Loop<float> XLoop, Bl
 template __host__ double timestepreductionCPU(Param XParam, Loop<double> XLoop, BlockP<double> XBlock, TimeP<double> XTime);
 
 /**
+ * @brief Limit the time step by the user maximum (dtmax) and end it on the next rain/river breakpoint (dtforcing).
+ * Without this, a step on a dry or nearly dry domain can straddle a change in rain rate by tens of seconds or more,
+ * and the forcing (sampled once per step) is applied at the wrong rate for that whole step.
+ * @tparam T Data type
+ * @param XParam Model parameters
+ * @param XLoop Loop control structure (nextforcingtime, totaltime)
+ * @param dt Time step from the CFL reduction
+ * @return Limited time step
+ */
+template <class T> __host__ T CapTimestep(Param XParam, Loop<T> XLoop, T dt)
+{
+	// optional user limit on the time step
+	if (XParam.dtmax > 0.0 && dt > XParam.dtmax)
+	{
+		dt = T(XParam.dtmax);
+	}
+	// end the step on the next rain/river breakpoint (equal steps up to it, as for output times)
+	double tf = XLoop.nextforcingtime - XLoop.totaltime;
+	if (tf > 0.0 && tf < 1.0e20)
+	{
+		dt = T(tf / ceil(tf / double(dt)));
+	}
+	return dt;
+}
+template __host__ float CapTimestep<float>(Param XParam, Loop<float> XLoop, float dt);
+template __host__ double CapTimestep<double>(Param XParam, Loop<double> XLoop, double dt);
+
+/**
  * @brief CPU routine to calculate the next time step for the simulation.
  * @tparam T Data type
  * @param XParam Model parameters
@@ -521,6 +549,8 @@ template <class T> __host__ T CalctimestepCPU(Param XParam, Loop<T> XLoop, Block
 	{
 		dt = T(1.5 * XLoop.dtmax);
 	}
+
+	dt = CapTimestep(XParam, XLoop, dt);
 
 	if (ceil((XLoop.nextoutputtime - XLoop.totaltime) / dt) > 0.0)
 	{
@@ -608,15 +638,16 @@ template <class T> __host__ T CalctimestepGPU(Param XParam,Loop<T> XLoop, BlockP
 		dummy[0] = T(1.5 * XLoop.dtmax);
 	}
 
+	dummy[0] = CapTimestep(XParam, XLoop, dummy[0]);
+
 	if (ceil((XLoop.nextoutputtime - XLoop.totaltime) / dummy[0]) > 0.0)
 	{
 		dummy[0] = T((XLoop.nextoutputtime - XLoop.totaltime) / ceil((XLoop.nextoutputtime - XLoop.totaltime) / dummy[0]));
 	}
 
-
-	return dummy[0];
-
-	free(dummy);
+	T dtout = dummy[0];
+	free(dummy); // was after the return, so 32 values leaked every step
+	return dtout;
 }
 template __host__ float CalctimestepGPU<float>(Param XParam,Loop<float> XLoop, BlockP<float> XBlock, TimeP<float> XTime);
 template __host__ double CalctimestepGPU<double>(Param XParam, Loop<double> XLoop, BlockP<double> XBlock, TimeP<double> XTime);

@@ -16,6 +16,9 @@ template <class T> void updateforcing(Param XParam, Loop<T> XLoop, Forcing<float
 
 void Forcingthisstep(Param XParam, double totaltime, DynForcingP<float>& XDynForcing);
 
+template <class T> double NextForcingTime(Param XParam, Loop<T> XLoop, Forcing<float>& XForcing);
+template <class T> void ForcingMidstep(Param XParam, Loop<T> XLoop, Forcing<float>& XForcing);
+
 template <class T> __device__ T interpDyn2BUQ(T x, T y, TexSetP Forcing);
 
 template <class T> __host__ void AddwindforcingCPU(Param XParam, BlockP<T> XBlock, DynForcingP<float> Uwind, DynForcingP<float> Vwind, AdvanceP<T> XAdv);

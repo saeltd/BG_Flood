@@ -160,6 +160,7 @@ template <class T> void FlowGPU(Param XParam, Loop<T>& XLoop, Forcing<float> XFo
 	// Reduce minimum timestep
 	XLoop.dt = double(CalctimestepGPU(XParam, XLoop, XModel.blocks, XModel.time));
 	XLoop.dtmax = XLoop.dt;
+	ForcingMidstep(XParam, XLoop, XForcing); // rain rate at mid-step (dtforcing)
 
 	for (int iseg = 0; iseg < XForcing.bndseg.size(); iseg++)
 	{
@@ -514,6 +515,7 @@ template <class T> void HalfStepGPU(Param XParam, Loop<T>& XLoop, Forcing<float>
 	// Reduce minimum timestep
 	XLoop.dt = double(CalctimestepGPU(XParam, XLoop, XModel.blocks, XModel.time));
 	XLoop.dtmax = XLoop.dt;
+	ForcingMidstep(XParam, XLoop, XForcing); // rain rate at mid-step (dtforcing)
 
 
 	XModel.time.dt = T(XLoop.dt);

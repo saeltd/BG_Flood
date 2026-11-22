@@ -376,6 +376,18 @@ Param readparamstr(std::string line, Param param)
 		param.dtmin = std::stod(parametervalue);
 
 	}
+	parameterstr = "dtmax";
+	parametervalue = findparameter(parameterstr, line);
+	if (!parametervalue.empty())
+	{
+		param.dtmax = std::stod(parametervalue);
+	}
+	parameterstr = "dtforcing";
+	parametervalue = findparameter(parameterstr, line);
+	if (!parametervalue.empty())
+	{
+		param.dtforcing = std::stoi(parametervalue);
+	}
 	parameterstr = "bndtaper";
 	parametervalue = findparameter(parameterstr, line);
 	if (!parametervalue.empty())
