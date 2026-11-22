@@ -1519,6 +1519,19 @@ void checkparamsanity(Param& XParam, Forcing<float>& XForcing)
 
 	XParam.endtime = setendtime(XParam, XForcing);
 
+	// Rain and river series are not used to limit endtime; if one ends earlier, its last value is held from then on
+	if (!XForcing.Rain.inputfile.empty() && XForcing.Rain.uniform && !XForcing.Rain.unidata.empty() && XForcing.Rain.unidata.back().time < XParam.endtime)
+	{
+		log("Warning: the rain series ends at " + std::to_string(XForcing.Rain.unidata.back().time) + " s, before endtime (" + std::to_string(XParam.endtime) + " s). Its last value (" + std::to_string(XForcing.Rain.unidata.back().wspeed) + " mm/h) is held to the end of the run.");
+	}
+	for (int r = 0; r < XForcing.rivers.size(); r++)
+	{
+		if (!XForcing.rivers[r].flowinput.empty() && XForcing.rivers[r].flowinput.back().time < XParam.endtime)
+		{
+			log("Warning: river series " + XForcing.rivers[r].Riverflowfile + " ends at " + std::to_string(XForcing.rivers[r].flowinput.back().time) + " s, before endtime. Its last value is held to the end of the run.");
+		}
+	}
+
 
 	// Assign a value for reftime if not yet set. 
 	//It is needed in the Netcdf file generation

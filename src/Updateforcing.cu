@@ -146,18 +146,27 @@ void Forcingthisstep(Param XParam, double totaltime, DynForcingP<float> &XDynFor
 	{
 		//
 		int Rstepinbnd = 1;
+		int nlast = int(XDynForcing.unidata.size()) - 1;
 
-		// Do this for all the corners
-		//Needs limiter in case WLbnd is empty
-		double difft = XDynForcing.unidata[Rstepinbnd].time - totaltime;
-
-		while (difft < 0.0)
+		if (totaltime >= XDynForcing.unidata[nlast].time)
 		{
-			Rstepinbnd++;
-			difft = XDynForcing.unidata[Rstepinbnd].time - totaltime;
+			// past the end of the series: hold the last value (the search below used to read past the end of the data)
+			XDynForcing.nowvalue = XDynForcing.unidata[nlast].wspeed;
 		}
+		else
+		{
+			// Do this for all the corners
+			//Needs limiter in case WLbnd is empty
+			double difft = XDynForcing.unidata[Rstepinbnd].time - totaltime;
 
-		XDynForcing.nowvalue =interptime(XDynForcing.unidata[Rstepinbnd].wspeed, XDynForcing.unidata[Rstepinbnd - 1].wspeed, XDynForcing.unidata[Rstepinbnd].time - XDynForcing.unidata[Rstepinbnd - 1].time, totaltime - XDynForcing.unidata[Rstepinbnd - 1].time);
+			while (difft < 0.0)
+			{
+				Rstepinbnd++;
+				difft = XDynForcing.unidata[Rstepinbnd].time - totaltime;
+			}
+
+			XDynForcing.nowvalue = interptime(XDynForcing.unidata[Rstepinbnd].wspeed, XDynForcing.unidata[Rstepinbnd - 1].wspeed, XDynForcing.unidata[Rstepinbnd].time - XDynForcing.unidata[Rstepinbnd - 1].time, totaltime - XDynForcing.unidata[Rstepinbnd - 1].time);
+		}
 
 
 
@@ -238,15 +247,24 @@ template <class T> __host__ void AddRiverForcing(Param XParam, Loop<T> XLoop, st
 	{
 		//
 		int bndstep = 0;
-		double difft = XRivers[Rin].flowinput[bndstep].time - tq;
-		while (difft <= 0.0) // danger?
+		int nlast = int(XRivers[Rin].flowinput.size()) - 1;
+		if (tq >= XRivers[Rin].flowinput[nlast].time)
 		{
-			bndstep++;
-			difft = XRivers[Rin].flowinput[bndstep].time - tq;
+			// past the end of the series: hold the last value (the search below used to read past the end of the data)
+			qnow = T(XRivers[Rin].flowinput[nlast].q);
+		}
+		else
+		{
+			double difft = XRivers[Rin].flowinput[bndstep].time - tq;
+			while (difft <= 0.0) // danger?
+			{
+				bndstep++;
+				difft = XRivers[Rin].flowinput[bndstep].time - tq;
+			}
+
+			qnow = T(interptime(XRivers[Rin].flowinput[bndstep].q, XRivers[Rin].flowinput[max(bndstep - 1, 0)].q, XRivers[Rin].flowinput[bndstep].time - XRivers[Rin].flowinput[max(bndstep - 1, 0)].time, tq - XRivers[Rin].flowinput[max(bndstep - 1, 0)].time));
 		}
 
-		qnow = T(interptime(XRivers[Rin].flowinput[bndstep].q, XRivers[Rin].flowinput[max(bndstep - 1, 0)].q, XRivers[Rin].flowinput[bndstep].time - XRivers[Rin].flowinput[max(bndstep - 1, 0)].time, tq - XRivers[Rin].flowinput[max(bndstep - 1, 0)].time));
-		
 		XModel.bndblk.Riverinfo.qnow[Rin] = qnow / XRivers[Rin].disarea;
 	
 	}
