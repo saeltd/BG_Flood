@@ -38,6 +38,7 @@ template <class T> bool Rivertest(T zsnit, int gpu);
 template <class T> bool MassConserveSteepSlope(T zsnit, int gpu);
 template <class T> bool Raintest(T zsnit, int gpu, float alpha,int engine);
 template <class T> double RainBreakpointtest(int gpu, int dtforcing);
+template <class T> bool StepLandingtest();
 template <class T> bool testboundaries(Param XParam, T maxslope);
 template <class T> bool ZoneOutputTest(int nzones, T zsinit);
 template <class T> bool Rainlossestest(T zsnit, int gpu, float alpha);

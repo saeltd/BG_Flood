@@ -468,6 +468,17 @@ template <class T> bool Testing(Param XParam, Forcing<float> XForcing, Model<T> 
 		isfailed = (!vbok || isfailed) ? true : false;
 	}
 
+	if (mytest == 22)
+	{
+		/* Test 22: time steps land on rain/river breakpoints that fall between output times (dtforcing = 1).
+			Steps the time-step logic on its own (no model). Pass: every breakpoint and output time reached within 1e-5 s,
+			and no sliver steps.
+		*/
+		log("\t### Time-step landing test (breakpoints between output times) ###");
+		bool landok = StepLandingtest<T>();
+		isfailed = (!landok || isfailed) ? true : false;
+	}
+
 	if (mytest == 993)
 	{
 		//pinned pageable Memory test
@@ -3259,6 +3270,99 @@ template <class T> double RainBreakpointtest(int gpu, int dtforcing)
 	double ratio = SimulatedVolume / TheoryInput;
 	log("\t\tRain breakpoint test (gpu " + std::to_string(gpu) + ", dtforcing " + std::to_string(dtforcing) + "): applied " + std::to_string(SimulatedVolume) + " m3 of " + std::to_string(TheoryInput) + " m3, ratio " + std::to_string(ratio));
 	return ratio;
+}
+
+
+/**! \fn bool StepLandingtest()
+ * @brief	Test that time steps land on rain/river breakpoints that fall between output times (dtforcing = 1)
+ * Steps the time-step logic on its own, as MainLoop does (NextForcingTime, 1.5 x growth limit, LandTimestep, output
+ * times every 60 s), with a fixed CFL step and no model. Forcing: the EA Test 3 river inflow (breakpoints 5, 15, 25,
+ * 35 s) plus a rain series with breakpoints at 40 and 41 s; end time 120 s. Includes the step sequence that stopped EA
+ * Test 3 (dx 5 m) on 23 Nov 2026: from t = 14.321329 s with a CFL step of 0.338361 s, the breakpoint division and
+ * then the output division left the step 0.000275 s short of 15 s, and the next step fell below dtmin.
+ * Pass: every breakpoint and output time after the start is reached within 1e-5 s, and no step is shorter than a
+ * quarter of the CFL step (or 0.5 s) or dtmin, i.e. no sliver steps.
+ * @return true if all cases pass
+ */
+template <class T> bool StepLandingtest()
+{
+	Param XParam;
+	XParam.dtforcing = 1;
+	XParam.endtime = 120.0;
+	double outstep = 60.0;
+
+	Forcing<float> XForcing;
+	River riv;
+	for (double tb : { 0.0, 5.0, 15.0, 25.0, 35.0, 900.0 })
+	{
+		Flowin f;
+		f.time = tb;
+		f.q = 0.0;
+		riv.flowinput.push_back(f);
+	}
+	XForcing.rivers.push_back(riv);
+	XForcing.Rain.inputfile = "series in memory (StepLandingtest)";
+	XForcing.Rain.uniform = true;
+	for (double tb : { 0.0, 40.0, 41.0, 900.0 })
+	{
+		Windin w;
+		w.time = tb;
+		w.wspeed = 0.0;
+		XForcing.Rain.unidata.push_back(w);
+	}
+	std::vector<double> targets = { 5.0, 15.0, 25.0, 35.0, 40.0, 41.0, 60.0, 120.0 };
+
+	// start time, CFL step (s)
+	std::vector<std::pair<double, double>> cases = { {14.321329, 0.338361}, {0.0, 0.338361}, {0.0, 0.0517}, {0.0, 0.7}, {0.0, 3.0}, {0.0, 7.3}, {0.0, 100.0} };
+	bool allok = true;
+	for (auto& c : cases)
+	{
+		Loop<T> XLoop;
+		XLoop.totaltime = c.first;
+		XLoop.nextoutputtime = outstep * (floor(c.first / outstep) + 1.0);
+		XLoop.dtmax = c.second;
+		XLoop.dt = c.second;
+		double shortest = 1.0e30;
+		std::vector<double> miss(targets.size(), 1.0e30);
+		int nstep = 0;
+		while (XLoop.totaltime < XParam.endtime && nstep < 1000000)
+		{
+			XLoop.nextforcingtime = NextForcingTime(XParam, XLoop, XForcing);
+			T dt = T(c.second);
+			if (dt > (1.5 * XLoop.dtmax))
+			{
+				dt = T(1.5 * XLoop.dtmax);
+			}
+			dt = LandTimestep(XParam, XLoop, dt);
+			XLoop.dt = double(dt);
+			XLoop.dtmax = XLoop.dt;
+			XLoop.totaltime = XLoop.totaltime + XLoop.dt;
+			nstep++;
+			shortest = std::min(shortest, XLoop.dt);
+			for (int k = 0; k < targets.size(); k++)
+			{
+				miss[k] = std::min(miss[k], std::abs(XLoop.totaltime - targets[k]));
+			}
+			// output time reached (as mapoutput)
+			if (XLoop.nextoutputtime - XLoop.totaltime <= std::max(XLoop.dt * 0.0000001, 0.0))
+			{
+				XLoop.nextoutputtime = std::min(XLoop.nextoutputtime + outstep, XParam.endtime);
+			}
+		}
+		double worst = 0.0;
+		for (int k = 0; k < targets.size(); k++)
+		{
+			if (targets[k] > c.first)
+			{
+				worst = std::max(worst, miss[k]);
+			}
+		}
+		// targets are at least 1 s apart, so equal steps to the nearest one are never shorter than min(CFL step / 2, 1 s)
+		bool ok = (worst < 1.0e-5) && (shortest >= std::max(XParam.dtmin, std::min(0.25 * c.second, 0.5)));
+		allok = allok && ok;
+		log("\t\tStep landing from t = " + std::to_string(c.first) + " s, CFL step " + std::to_string(c.second) + " s: " + std::to_string(nstep) + " steps, shortest " + std::to_string(shortest) + " s, worst miss " + std::to_string(worst) + " s : " + (ok ? "successful" : "failed"));
+	}
+	return allok;
 }
 
 
