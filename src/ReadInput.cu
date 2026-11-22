@@ -1403,6 +1403,11 @@ void checkparamsanity(Param& XParam, Forcing<float>& XForcing)
 	{
 
 		XForcing.bndseg[iseg].poly= readbndpolysegment(XForcing.bndseg[iseg], XParam);
+		if (XForcing.bndseg[iseg].type == 4)
+		{
+			// bndFluxGPUSide (the segment boundary code used by the main loop) handles types 0, 2 and 3 only
+			log("Warning: boundary type 4 is not applied by the boundary-segment code; segment " + std::to_string(iseg) + " (" + XForcing.bndseg[iseg].polyfile + ") will act as type 1 (Neumann). Type 3 is the absorbing boundary.");
+		}
 		//if (XForcing.bndseg[iseg].type == 2)
 		//{
 		//	XForcing.bndseg[iseg].type = 3;
@@ -1664,14 +1669,15 @@ void checkparamsanity(Param& XParam, Forcing<float>& XForcing)
 	{
 		if (XForcing.cl.inputfile.empty())
 		{
-			log("Error: File identified for initial loss but no data entered for continuous loss.\n Please, enter a ");
+			// a constant cl with an il map is valid: the constant is used everywhere (this used to be logged as an error)
+			log("Note: initial loss from a map, continuous loss constant everywhere (cl = " + std::to_string(XParam.cl) + " mm/h).");
 		}
 	}
 	if (!XForcing.cl.inputfile.empty())
 	{
 		if (XForcing.il.inputfile.empty())
 		{
-			log("Error: File identified for continuous loss but no data entered for initial loss");
+			log("Note: continuous loss from a map, initial loss constant everywhere (il = " + std::to_string(XParam.il) + " mm).");
 		}
 	}
 
