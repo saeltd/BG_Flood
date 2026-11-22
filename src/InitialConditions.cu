@@ -1334,21 +1334,34 @@ template <class T> void Initbndblks(Param& XParam, Forcing<float>& XForcing, Blo
 	//if(XForcing.bndseg.size()>0)
 
 	std::vector<int> bndblks;
-	std::vector<int> bndsegment;
+	// Segment of each boundary side of each boundary block (-1: that side is not on the boundary).
+	// Assigned per side, not per block: a corner block touches two sides, and a segment defined by a side keyword
+	// (left/right/top/bot) only applies to that side. Previously the whole block went to the last segment whose
+	// polygon it touched, so e.g. with both left and bot declared, the corner blocks' left sides were taken by bot
+	// and a left boundary skipped the first and last block rows (a domain one block tall got no left boundary).
+	std::vector<int> segleft, segright, segtop, segbot;
+	const char* sidename[4] = { "left", "right", "top", "bot" };
 	// 1. Find all the boundary blocks (block with themselves as neighbours)
-	
-	
+
+
 	for (int ibl = 0; ibl < XParam.nblk; ibl++)
 	{
 		int ib = XBlock.active[ibl];
 
-		bool testbot = (XBlock.BotLeft[ib] == ib) || (XBlock.BotRight[ib] == ib) || (XBlock.TopLeft[ib] == ib) || (XBlock.TopRight[ib] == ib) || (XBlock.LeftTop[ib] == ib) || (XBlock.LeftBot[ib] == ib) || (XBlock.RightTop[ib] == ib) || (XBlock.RightBot[ib] == ib);
+		bool onside[4] = { (XBlock.LeftBot[ib] == ib) || (XBlock.LeftTop[ib] == ib), (XBlock.RightBot[ib] == ib) || (XBlock.RightTop[ib] == ib),
+			(XBlock.TopLeft[ib] == ib) || (XBlock.TopRight[ib] == ib), (XBlock.BotLeft[ib] == ib) || (XBlock.BotRight[ib] == ib) };
+		bool testbot = onside[0] || onside[1] || onside[2] || onside[3];
 		if (testbot)
 		{
 			T dxlev = calcres(XParam.dx, XBlock.level[ib]);
 
 			bndblks.push_back(ib);
-			bndsegment.push_back(XForcing.bndseg.size()-1); // i.e. by default the block doesn't belong to a segment so it belongs to collector (last) segemnt
+			// by default a side doesn't belong to a segment so it belongs to the collector (last) segment
+			int seg[4];
+			for (int k = 0; k < 4; k++)
+			{
+				seg[k] = onside[k] ? int(XForcing.bndseg.size()) - 1 : -1;
+			}
 			//loop through all but the last bnd seg which is meant for block that are not in any segments
 			for (int s = 0; s < XForcing.bndseg.size()-1; s++)
 			{
@@ -1356,19 +1369,38 @@ template <class T> void Initbndblks(Param& XParam, Forcing<float>& XForcing, Blo
 
 				if (inpoly)
 				{
-					bndsegment.back() = s;
+					std::string pf = XForcing.bndseg[s].polyfile;
+					std::transform(pf.begin(), pf.end(), pf.begin(), ::tolower);
+					for (int k = 0; k < 4; k++)
+					{
+						bool namedside = false, thisside = false;
+						for (int q = 0; q < 4; q++)
+						{
+							if (pf.compare(sidename[q]) == 0)
+							{
+								namedside = true;
+								thisside = (q == k);
+							}
+						}
+						if (onside[k] && (!namedside || thisside))
+						{
+							seg[k] = s;
+						}
+					}
 				}
 
 			}
-
-
+			segleft.push_back(seg[0]);
+			segright.push_back(seg[1]);
+			segtop.push_back(seg[2]);
+			segbot.push_back(seg[3]);
 
 		}
-		
+
 
 	}
 
-	
+
 	for (int s = 0; s < XForcing.bndseg.size(); s++)
 	{
 		int segcount = 0;
@@ -1376,30 +1408,28 @@ template <class T> void Initbndblks(Param& XParam, Forcing<float>& XForcing, Blo
 		int rightcount = 0;
 		int topcount = 0;
 		int botcount = 0;
-		
+
 		for (int ibl = 0; ibl < bndblks.size(); ibl++)
 		{
-			int ib = bndblks[ibl];
-			if (bndsegment[ibl] == s)
+			if (segleft[ibl] == s || segright[ibl] == s || segtop[ibl] == s || segbot[ibl] == s)
 			{
 				segcount++;
-
-				if ((XBlock.BotLeft[ib] == ib) || (XBlock.BotRight[ib] == ib))
-				{
-					botcount++;
-				}
-				if ((XBlock.TopLeft[ib] == ib) || (XBlock.TopRight[ib] == ib))
-				{
-					topcount++;
-				}
-				if ((XBlock.LeftBot[ib] == ib) || (XBlock.LeftTop[ib] == ib))
-				{
-					leftcount++;
-				}
-				if ((XBlock.RightBot[ib] == ib) || (XBlock.RightTop[ib] == ib))
-				{
-					rightcount++;
-				}
+			}
+			if (segbot[ibl] == s)
+			{
+				botcount++;
+			}
+			if (segtop[ibl] == s)
+			{
+				topcount++;
+			}
+			if (segleft[ibl] == s)
+			{
+				leftcount++;
+			}
+			if (segright[ibl] == s)
+			{
+				rightcount++;
 			}
 		}
 		XForcing.bndseg[s].nblk = segcount;
@@ -1437,29 +1467,25 @@ template <class T> void Initbndblks(Param& XParam, Forcing<float>& XForcing, Blo
 		{
 			int ib = bndblks[ibl];
 
-			if (bndsegment[ibl] == s)
+			if (segbot[ibl] == s)
 			{
-				if ((XBlock.BotLeft[ib] == ib) || (XBlock.BotRight[ib] == ib))
-				{
-					XForcing.bndseg[s].bot.blk[botcount] = ib;
-					botcount++;
-				}
-				if ((XBlock.TopLeft[ib] == ib) || (XBlock.TopRight[ib] == ib))
-				{
-					XForcing.bndseg[s].top.blk[topcount] = ib;
-					topcount++;
-				}
-				if ((XBlock.LeftBot[ib] == ib) || (XBlock.LeftTop[ib] == ib))
-				{
-					XForcing.bndseg[s].left.blk[leftcount] = ib;
-					leftcount++;
-				}
-				if ((XBlock.RightBot[ib] == ib) || (XBlock.RightTop[ib] == ib))
-				{
-					XForcing.bndseg[s].right.blk[rightcount] = ib;
-					rightcount++;
-				}
-
+				XForcing.bndseg[s].bot.blk[botcount] = ib;
+				botcount++;
+			}
+			if (segtop[ibl] == s)
+			{
+				XForcing.bndseg[s].top.blk[topcount] = ib;
+				topcount++;
+			}
+			if (segleft[ibl] == s)
+			{
+				XForcing.bndseg[s].left.blk[leftcount] = ib;
+				leftcount++;
+			}
+			if (segright[ibl] == s)
+			{
+				XForcing.bndseg[s].right.blk[rightcount] = ib;
+				rightcount++;
 			}
 
 		}

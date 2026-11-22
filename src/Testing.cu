@@ -26,6 +26,7 @@
  * Test 14 Test AOI bnds aswall to start with
  * Test 15 Flexible times reading
  * Test 16 Test Culverts
+ * Test 20 A side boundary applies over the whole side, including the corner block rows
 
  * Test 99 Run all the test with test number < 99.
 
@@ -380,6 +381,18 @@ template <class T> bool Testing(Param XParam, Forcing<float> XForcing, Model<T> 
 		log("\t\tCulvert test : " + result);
 
 
+	}
+
+	if (mytest == 20)
+	{
+		/* Test 20: a side boundary (left level) applies over the whole side, including the corner block rows,
+			when the other sides are declared too.
+		*/
+		log("\t### Side boundary over the corner block rows ###");
+		bool cornerok = BndCornerblocktest<T>(XParam.GPUDEVICE >= 0 ? 0 : -1);
+		result = cornerok ? "successful" : "failed";
+		log("\t\tSide boundary corner-block test : " + result);
+		isfailed = (!cornerok || isfailed) ? true : false;
 	}
 
 	if (mytest == 993)
@@ -3992,6 +4005,122 @@ template <class T> bool Rainlossestest(T zsinit, int gpu, float alpha)
 
 	//log("#####");
 	return modelgood;
+}
+
+
+/**! \fn bool BndCornerblocktest(int gpu)
+ * @brief	A boundary on one side applies over the whole side, including the corner block rows
+ * Flat 64 m x 48 m domain at 1 m (4 x 3 blocks), still water at 0.5 m. Left: water level 1.0 m (type 2); right,
+ * top and bot declared as walls (as "right = 0;" etc. in a parameter file). Checks that the left segment holds the
+ * left side of all 3 left-column blocks and no top/bottom sides, and that after 20 s the level 2 m from the left
+ * edge is the same in the corner block rows as in the middle row (water enters along the whole side).
+ * @param gpu GPU device to use (or -1 for CPU)
+ * @return true if the segment sides and the levels are right
+ */
+template <class T> bool BndCornerblocktest(int gpu)
+{
+	log("#####");
+	Param XParam;
+	XParam.dx = 1.0;
+	XParam.xo = 0.0;
+	XParam.yo = 0.0;
+	XParam.xmax = 64.0;
+	XParam.ymax = 48.0;
+	XParam.zsinit = 0.5;
+	XParam.endtime = 20.0;
+	XParam.outputtimestep = 20.0;
+	XParam.smallnc = 0;
+	XParam.outfile = "BndCornerblock_test.nc";
+	XParam.cf = 0.01;
+	XParam.frictionmodel = 0;
+	XParam.GPUDEVICE = gpu;
+	std::vector<std::string> outv = { "zs","h" };
+	XParam.outvars = outv;
+
+	Model<T> XModel;
+	Model<T> XModel_g;
+	Forcing<float> XForcing;
+	StaticForcingP<float> bathy;
+	XForcing.Bathy.push_back(bathy);
+	XForcing.Bathy[0].xo = -10.0;
+	XForcing.Bathy[0].yo = -10.0;
+	XForcing.Bathy[0].xmax = 74.0;
+	XForcing.Bathy[0].ymax = 58.0;
+	XForcing.Bathy[0].nx = 3;
+	XForcing.Bathy[0].ny = 3;
+	XForcing.Bathy[0].dx = 42.0;
+	XForcing.Bathy[0].dy = XForcing.Bathy[0].dx;
+	AllocateCPU(1, 1, XForcing.left.blks, XForcing.right.blks, XForcing.top.blks, XForcing.bot.blks);
+	AllocateCPU(XForcing.Bathy[0].nx, XForcing.Bathy[0].ny, XForcing.Bathy[0].val);
+	for (int i = 0; i < XForcing.Bathy[0].nx * XForcing.Bathy[0].ny; i++)
+	{
+		XForcing.Bathy[0].val[i] = 0.0f;
+	}
+
+	std::ofstream bnd_file("bnd_cornerlevel.tmp", std::ios_base::out | std::ios_base::trunc);
+	bnd_file << "0.0 1.0" << std::endl;
+	bnd_file << "3600.0 1.0" << std::endl;
+	bnd_file.close();
+	const char* sides[4] = { "left", "right", "top", "bot" };
+	for (int k = 0; k < 4; k++)
+	{
+		bndsegment b;
+		b.polyfile = sides[k];
+		if (k == 0)
+		{
+			b.type = 2;
+			b.inputfile = "bnd_cornerlevel.tmp";
+			b.on = true;
+			b.uniform = true;
+		}
+		else
+		{
+			b.type = 0;
+		}
+		XForcing.bndseg.push_back(b);
+	}
+
+	checkparamsanity(XParam, XForcing);
+	XForcing.bndseg[0].data = readINfileUNI(XForcing.bndseg[0].inputfile, XParam.reftime);
+	InitMesh(XParam, XForcing, XModel);
+	InitialConditions(XParam, XForcing, XModel);
+	InitialAdaptation(XParam, XForcing, XModel);
+	SetupGPU(XParam, XModel, XForcing, XModel_g);
+
+	bool segok = XForcing.bndseg[0].left.nblk == 3 && XForcing.bndseg[0].top.nblk == 0 && XForcing.bndseg[0].bot.nblk == 0
+		&& XForcing.bndseg[2].left.nblk == 0 && XForcing.bndseg[3].left.nblk == 0;
+	log("\t\tLeft segment: left sides " + std::to_string(XForcing.bndseg[0].left.nblk) + " (3 expected), top " + std::to_string(XForcing.bndseg[0].top.nblk) + ", bot " + std::to_string(XForcing.bndseg[0].bot.nblk) + " (0 expected); left sides held by top/bot wall segments: " + std::to_string(XForcing.bndseg[2].left.nblk) + "/" + std::to_string(XForcing.bndseg[3].left.nblk) + " (0 expected)");
+
+	MainLoop(XParam, XForcing, XModel, XModel_g);
+	if (XParam.GPUDEVICE >= 0)
+	{
+		CUDA_CHECK(cudaMemcpy(XModel.OutputVarMap["zs"], XModel_g.OutputVarMap["zs"], XParam.nblkmem * XParam.blksize * sizeof(T), cudaMemcpyDeviceToHost));
+	}
+
+	// level 2 m from the left edge, mid-height of each left-column block, ordered bottom to top
+	std::vector<std::pair<double, double>> lev;
+	for (int ibl = 0; ibl < XParam.nblk; ibl++)
+	{
+		int ib = XModel.blocks.active[ibl];
+		if (XModel.blocks.LeftBot[ib] == ib)
+		{
+			int i = memloc(XParam, 2, 8, ib);
+			lev.push_back(std::make_pair(double(XModel.blocks.yo[ib]), double(XModel.evolv.zs[i])));
+		}
+	}
+	std::sort(lev.begin(), lev.end());
+	bool levok = lev.size() == 3;
+	std::string levs = "";
+	for (int k = 0; k < lev.size(); k++)
+	{
+		levs = levs + " " + std::to_string(lev[k].second);
+	}
+	if (levok)
+	{
+		levok = lev[1].second > 0.6 && std::abs(lev[0].second - lev[1].second) < 0.02 && std::abs(lev[2].second - lev[1].second) < 0.02;
+	}
+	log("\t\tLevel 2 m from the left edge at 20 s (bottom, middle, top block row):" + levs + " m");
+	return segok && levok;
 }
 
 
