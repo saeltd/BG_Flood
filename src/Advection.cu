@@ -528,6 +528,28 @@ template __host__ float CapTimestep<float>(Param XParam, Loop<float> XLoop, floa
 template __host__ double CapTimestep<double>(Param XParam, Loop<double> XLoop, double dt);
 
 /**
+ * @brief Final time step: CapTimestep (dtmax, rain/river breakpoints), then equal steps up to the next output time.
+ * Shared by CalctimestepCPU and CalctimestepGPU (and unit test 22).
+ * @tparam T Data type
+ * @param XParam Model parameters
+ * @param XLoop Loop control structure (nextoutputtime, nextforcingtime, totaltime)
+ * @param dt Time step from the CFL reduction (after the 1.5 x growth limit)
+ * @return Time step for this step
+ */
+template <class T> __host__ T LandTimestep(Param XParam, Loop<T> XLoop, T dt)
+{
+	dt = CapTimestep(XParam, XLoop, dt);
+
+	if (ceil((XLoop.nextoutputtime - XLoop.totaltime) / dt) > 0.0)
+	{
+		dt = T((XLoop.nextoutputtime - XLoop.totaltime) / ceil((XLoop.nextoutputtime - XLoop.totaltime) / dt));
+	}
+	return dt;
+}
+template __host__ float LandTimestep<float>(Param XParam, Loop<float> XLoop, float dt);
+template __host__ double LandTimestep<double>(Param XParam, Loop<double> XLoop, double dt);
+
+/**
  * @brief CPU routine to calculate the next time step for the simulation.
  * @tparam T Data type
  * @param XParam Model parameters
@@ -550,14 +572,9 @@ template <class T> __host__ T CalctimestepCPU(Param XParam, Loop<T> XLoop, Block
 		dt = T(1.5 * XLoop.dtmax);
 	}
 
-	dt = CapTimestep(XParam, XLoop, dt);
+	dt = LandTimestep(XParam, XLoop, dt);
 
-	if (ceil((XLoop.nextoutputtime - XLoop.totaltime) / dt) > 0.0)
-	{
-		dt = T((XLoop.nextoutputtime - XLoop.totaltime) / ceil((XLoop.nextoutputtime - XLoop.totaltime) / dt));
-	}
 
-	
 
 	return dt;
 
@@ -638,12 +655,7 @@ template <class T> __host__ T CalctimestepGPU(Param XParam,Loop<T> XLoop, BlockP
 		dummy[0] = T(1.5 * XLoop.dtmax);
 	}
 
-	dummy[0] = CapTimestep(XParam, XLoop, dummy[0]);
-
-	if (ceil((XLoop.nextoutputtime - XLoop.totaltime) / dummy[0]) > 0.0)
-	{
-		dummy[0] = T((XLoop.nextoutputtime - XLoop.totaltime) / ceil((XLoop.nextoutputtime - XLoop.totaltime) / dummy[0]));
-	}
+	dummy[0] = LandTimestep(XParam, XLoop, dummy[0]);
 
 	T dtout = dummy[0];
 	free(dummy); // was after the return, so 32 values leaked every step
