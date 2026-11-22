@@ -42,6 +42,7 @@ template <class T> bool testboundaries(Param XParam, T maxslope);
 template <class T> bool ZoneOutputTest(int nzones, T zsinit);
 template <class T> bool Rainlossestest(T zsnit, int gpu, float alpha);
 template <class T> bool Rainlossesplatetest(int gpu);
+bool AsciiGridtest();
 template <class T> bool TestMultiBathyRough(int gpu, T ref, int secnario);
 
 template <class T> bool TestCulvert(int gpu, T ref, int scenario);

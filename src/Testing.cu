@@ -28,6 +28,7 @@
  * Test 16 Test Culverts
  * Test 17 Rain time series applied in full on a dry domain (time steps end on the breakpoints, dtforcing)
  * Test 18 Initial + continuing loss amounts on a flat plate against the hand solution (GPU and CPU)
+ * Test 19 ESRI ASCII (.asc) grids: corner- and centre-registered headers
 
  * Test 99 Run all the test with test number < 99.
 
@@ -423,6 +424,17 @@ template <class T> bool Testing(Param XParam, Forcing<float> XForcing, Model<T> 
 		result = lossok ? "successful" : "failed";
 		log("\t\tIL/CL plate test : " + result);
 		isfailed = (!lossok || isfailed) ? true : false;
+	}
+
+	if (mytest == 19)
+	{
+		/* Test 19: ESRI ASCII grids, corner- and centre-registered headers (origin, spacing, values).
+		*/
+		log("\t### ASCII grid (.asc) reading test ###");
+		bool ascok = AsciiGridtest();
+		result = ascok ? "successful" : "failed";
+		log("\t\tASCII grid test : " + result);
+		isfailed = (!ascok || isfailed) ? true : false;
 	}
 
 	if (mytest == 993)
@@ -4261,6 +4273,63 @@ template <class T> bool Rainlossesplatetest(int gpu)
 	double hmm = 1000.0 * hsum / n, gmm = 1000.0 * gsum / n;
 	bool ok = std::abs(hmm - 4.0) < 0.1 && std::abs(gmm - 6.0) < 0.1;
 	log("\t\tIL/CL plate test (gpu " + std::to_string(gpu) + "): water left " + std::to_string(hmm) + " mm (hand 4.0), loss " + std::to_string(gmm) + " mm (hand 6.0) : " + (ok ? "successful" : "failed"));
+	return ok;
+}
+
+
+/**! \fn bool AsciiGridtest()
+ * @brief	Read ESRI ASCII (.asc) grids with corner- and centre-registered headers
+ * A 4 x 3 grid of 10 m cells holding z = x + 2y at the cell centres is written twice: with XLLCORNER/YLLCORNER
+ * (upper-case keywords) and with xllcenter/yllcenter (lower case). Each is read with readstaticforcing. The origin must be the
+ * first cell centre (105, 205), dx = dy = 10, and bilinear interpolation of the linear field must return it exactly.
+ * @return true if both files are read correctly
+ */
+bool AsciiGridtest()
+{
+	bool ok = true;
+	for (int reg = 0; reg < 2; reg++)
+	{
+		std::string fn = (reg == 0) ? "asctest_corner.asc" : "asctest_centre.asc";
+		std::ofstream f(fn, std::ios_base::out | std::ios_base::trunc);
+		if (reg == 0)
+		{
+			f << "NCOLS 4" << std::endl << "NROWS 3" << std::endl;
+			f << "XLLCORNER 100" << std::endl << "YLLCORNER 200" << std::endl;
+			f << "CELLSIZE 10" << std::endl << "NODATA_VALUE -9999" << std::endl;
+		}
+		else
+		{
+			f << "ncols 4" << std::endl << "nrows 3" << std::endl;
+			f << "xllcenter 105" << std::endl << "yllcenter 205" << std::endl;
+			f << "cellsize 10" << std::endl << "nodata_value -9999" << std::endl;
+		}
+		for (int j = 2; j >= 0; j--)
+		{
+			for (int i = 0; i < 4; i++)
+			{
+				f << (105.0 + 10.0 * i) + 2.0 * (205.0 + 10.0 * j) << " ";
+			}
+			f << std::endl;
+		}
+		f.close();
+
+		StaticForcingP<float> s;
+		s = readfileinfo(fn, s);
+		readstaticforcing(s);
+		bool hok = s.nx == 4 && s.ny == 3 && std::abs(s.xo - 105.0) < 1e-9 && std::abs(s.yo - 205.0) < 1e-9 && s.dx == 10.0 && s.dy == 10.0;
+		bool vok = hok;
+		double xs[3] = { 105.0, 112.5, 135.0 };
+		double ys[3] = { 205.0, 213.0, 225.0 };
+		std::string vals = "";
+		for (int k = 0; k < 3 && hok; k++)
+		{
+			double z = interp2BUQ(xs[k], ys[k], s);
+			vals = vals + " " + std::to_string(z) + " (" + std::to_string(xs[k] + 2.0 * ys[k]) + ")";
+			vok = vok && std::abs(z - (xs[k] + 2.0 * ys[k])) < 1e-3;
+		}
+		log("\t\t" + fn + ": nx " + std::to_string(s.nx) + " ny " + std::to_string(s.ny) + " xo " + std::to_string(s.xo) + " yo " + std::to_string(s.yo) + " dx " + std::to_string(s.dx) + " dy " + std::to_string(s.dy) + "; values" + vals + " : " + ((hok && vok) ? "successful" : "failed"));
+		ok = ok && hok && vok;
+	}
 	return ok;
 }
 
