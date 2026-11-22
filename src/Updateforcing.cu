@@ -784,7 +784,7 @@ template <class T> __host__ void AddinfiltrationImplicitCPU(Param XParam, Loop<T
 				if (waterOut > 0)
 				{
 					//Computation of the initial loss
-					availinitialinfiltration = il[i] / T(1000.0) - hgw[i];
+					availinitialinfiltration = max(il[i] / T(1000.0) - hgw[i], T(0.0)); // clip as in the GPU kernel: once IL is filled this went negative and cancelled the continuing loss
 					infiltrationLoc = min(waterOut, availinitialinfiltration);
 					waterOut -= infiltrationLoc;
 
