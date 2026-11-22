@@ -30,6 +30,7 @@
  * Test 18 Initial + continuing loss amounts on a flat plate against the hand solution (GPU and CPU)
  * Test 19 ESRI ASCII (.asc) grids: corner- and centre-registered headers
  * Test 20 A side boundary applies over the whole side, including the corner block rows
+ * Test 21 Volume balance (massbalance) on a closed plate with rain, a river source and an initial loss
 
  * Test 99 Run all the test with test number < 99.
 
@@ -448,6 +449,23 @@ template <class T> bool Testing(Param XParam, Forcing<float> XForcing, Model<T> 
 		result = cornerok ? "successful" : "failed";
 		log("\t\tSide boundary corner-block test : " + result);
 		isfailed = (!cornerok || isfailed) ? true : false;
+	}
+
+	if (mytest == 21)
+	{
+		/* Test 21: volume balance (massbalance) on a closed plate with rain, a river source and an initial loss,
+			on GPU (if present) and CPU.
+		*/
+		log("\t### Volume balance test ###");
+		bool vbok = true;
+		if (XParam.GPUDEVICE >= 0)
+		{
+			vbok = VolBalancetest<T>(0) && vbok;
+		}
+		vbok = VolBalancetest<T>(-1) && vbok;
+		result = vbok ? "successful" : "failed";
+		log("\t\tVolume balance test : " + result);
+		isfailed = (!vbok || isfailed) ? true : false;
 	}
 
 	if (mytest == 993)
@@ -4460,6 +4478,110 @@ template <class T> bool BndCornerblocktest(int gpu)
 	}
 	log("\t\tLevel 2 m from the left edge at 20 s (bottom, middle, top block row):" + levs + " m");
 	return segok && levok;
+}
+
+
+/**! \fn bool VolBalancetest(int gpu)
+ * @brief	Volume balance (Param massbalance) on a closed plate with rain, a river source and an initial loss
+ * Flat closed 128 m x 128 m plate at 8 m, dry start. Rain 30 mm/h from t = 0 (constant, so time stepping cannot
+ * change the rain volume), river 0.05 m3/s on a 16 m x 16 m box, IL 2 mm everywhere, 600 s.
+ * Checks: rain applied = series over the rain area within 0.01 %; river in = 30 m3 within 0.01 %; the domain is
+ * recognised as closed and the mass error is within 0.05 % of rain + river.
+ * @param gpu GPU device to use (or -1 for CPU)
+ * @return true if all checks pass
+ */
+template <class T> bool VolBalancetest(int gpu)
+{
+	log("#####");
+	Param XParam;
+	XParam.dx = 8.0;
+	XParam.xo = 0.0;
+	XParam.yo = 0.0;
+	XParam.xmax = 128.0;
+	XParam.ymax = 128.0;
+	XParam.zsinit = -1.0;
+	XParam.endtime = 600.0;
+	XParam.outputtimestep = 300.0;
+	XParam.smallnc = 0;
+	XParam.outfile = "VolBalance_test.nc";
+	XParam.cf = 0.01;
+	XParam.frictionmodel = 0;
+	XParam.infiltration = true;
+	XParam.il = 2.0;
+	XParam.cl = 0.0;
+	XParam.GPUDEVICE = gpu;
+	std::vector<std::string> outv = { "h","hgw" };
+	XParam.outvars = outv;
+
+	Model<T> XModel;
+	Model<T> XModel_g;
+	Forcing<float> XForcing;
+	StaticForcingP<float> bathy;
+	XForcing.Bathy.push_back(bathy);
+	XForcing.Bathy[0].xo = -16.0;
+	XForcing.Bathy[0].yo = -16.0;
+	XForcing.Bathy[0].xmax = 144.0;
+	XForcing.Bathy[0].ymax = 144.0;
+	XForcing.Bathy[0].nx = 3;
+	XForcing.Bathy[0].ny = 3;
+	XForcing.Bathy[0].dx = 80.0;
+	XForcing.Bathy[0].dy = XForcing.Bathy[0].dx;
+	AllocateCPU(1, 1, XForcing.left.blks, XForcing.right.blks, XForcing.top.blks, XForcing.bot.blks);
+	AllocateCPU(XForcing.Bathy[0].nx, XForcing.Bathy[0].ny, XForcing.Bathy[0].val);
+	for (int i = 0; i < XForcing.Bathy[0].nx * XForcing.Bathy[0].ny; i++)
+	{
+		XForcing.Bathy[0].val[i] = 0.0f;
+	}
+	XForcing.right.type = 0;
+	XForcing.left.type = 0;
+	XForcing.top.type = 0;
+	XForcing.bot.type = 0;
+	const char* sides[4] = { "left", "right", "top", "bot" };
+	for (int k = 0; k < 4; k++)
+	{
+		bndsegment b;
+		b.polyfile = sides[k];
+		b.type = 0;
+		XForcing.bndseg.push_back(b);
+	}
+
+	std::ofstream rain_file("testrainvolbal.tmp", std::ios_base::out | std::ios_base::trunc);
+	rain_file << "0.0 30.0" << std::endl;
+	rain_file << "3600.0 30.0" << std::endl;
+	rain_file.close();
+	XForcing.Rain.inputfile = "testrainvolbal.tmp";
+	XForcing.Rain.uniform = true;
+	XForcing.Rain.unidata = readINfileUNI(XForcing.Rain.inputfile, XParam.reftime);
+
+	std::ofstream river_file("testrivervolbal.tmp", std::ios_base::out | std::ios_base::trunc);
+	river_file << "0.0 0.05" << std::endl;
+	river_file << "3600.0 0.05" << std::endl;
+	river_file.close();
+	River thisriver;
+	thisriver.Riverflowfile = "testrivervolbal.tmp";
+	thisriver.xstart = 56.0;
+	thisriver.xend = 72.0;
+	thisriver.ystart = 56.0;
+	thisriver.yend = 72.0;
+	XForcing.rivers.push_back(thisriver);
+	XForcing.rivers[0].flowinput = readFlowfile(XForcing.rivers[0].Riverflowfile, XParam.reftime);
+
+	checkparamsanity(XParam, XForcing);
+	InitMesh(XParam, XForcing, XModel);
+	InitialConditions(XParam, XForcing, XModel);
+	InitialAdaptation(XParam, XForcing, XModel);
+	SetupGPU(XParam, XModel, XForcing, XModel_g);
+
+	MainLoop(XParam, XForcing, XModel, XModel_g);
+
+	// the balance MainLoop wrote at its last map output (t = endtime)
+	VolBalance vb = LastVolBalance;
+	bool tok = vb.valid && std::abs(vb.t - XParam.endtime) < 1.0e-6;
+	bool rainok = vb.rainseries > 0.0 && std::abs(vb.rain - vb.rainseries) / vb.rainseries < 1.0e-4;
+	bool riverok = std::abs(vb.river - 30.0) / 30.0 < 1.0e-4;
+	bool massok = vb.closed && std::abs(vb.residual) / (vb.rain + vb.river) < 5.0e-4;
+	log("\t\tVolume balance test (gpu " + std::to_string(gpu) + "): t " + std::to_string(vb.t) + " s; rain " + std::to_string(vb.rain) + " m3 vs series " + std::to_string(vb.rainseries) + " m3; river " + std::to_string(vb.river) + " m3 (30 expected); storage " + std::to_string(vb.storage) + " m3, losses " + std::to_string(vb.loss) + " m3; closed " + std::to_string(vb.closed) + "; mass error " + std::to_string(vb.residual) + " m3 : " + ((tok && rainok && riverok && massok) ? "successful" : "failed"));
+	return tok && rainok && riverok && massok;
 }
 
 

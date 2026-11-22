@@ -378,6 +378,11 @@ template <class T> void CopytoGPU(int nblk, int blksize, Param XParam, Model<T> 
 		CopytoGPU(nblk, blksize, XModel_cpu.hgw, XModel_gpu.hgw);
 	}
 
+	if (XParam.massbalance > 0)
+	{
+		CopytoGPU(nblk, blksize, XModel_cpu.cumrain, XModel_gpu.cumrain);
+	}
+
 	if (XParam.outmax)
 	{
 		CopytoGPU(nblk, blksize, XModel_cpu.evmax, XModel_gpu.evmax);

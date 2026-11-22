@@ -334,7 +334,10 @@ struct Model
 
 	//GroundWater elevation (due to the accumulation of water by infiltration during the simulation)
 	T* hgw;
-	
+
+	// Rain added to each cell since the start of the run (m), for the volume balance (Param massbalance)
+	T* cumrain = nullptr;
+
 	// Used for external forcing too
 	// May need a better placeholder
 	T* Patm, *datmpdx, *datmpdy;
@@ -397,6 +400,10 @@ struct Loop
 	int windstep = 1;
 	int atmpstep = 1;
 	int rainstep = 1;
+
+	// Volume balance (Param massbalance): river inflow so far (m3) and storage at the first output (m3, -1 = not yet)
+	double volriver = 0.0;
+	double volstart = -1.0;
 
 	bool winduniform;
 	bool rainuniform;

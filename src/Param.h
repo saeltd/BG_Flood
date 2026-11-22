@@ -154,6 +154,7 @@ public:
 	Default: "zb", "zs", "u", "v", "h"
 	*/
 	double wet_threshold = 0.1; //in m. Limit to consider a cell wet for the twet output (duration of inundation (s))
+	int massbalance = 1; // 1: write a volume balance to BG_log at every map output (storage, rain applied, river inflow, losses, net outflow through boundaries + mass error); 0: off. Fixed mesh only
 
 	std::vector<outzoneP> outzone;
 	/*Zoned output (netcdf file), giving a file name and the position of two corner points

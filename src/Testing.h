@@ -44,6 +44,7 @@ template <class T> bool Rainlossestest(T zsnit, int gpu, float alpha);
 template <class T> bool Rainlossesplatetest(int gpu);
 bool AsciiGridtest();
 template <class T> bool BndCornerblocktest(int gpu);
+template <class T> bool VolBalancetest(int gpu);
 template <class T> bool TestMultiBathyRough(int gpu, T ref, int secnario);
 
 template <class T> bool TestCulvert(int gpu, T ref, int scenario);

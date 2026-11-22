@@ -358,7 +358,7 @@ template <class T> void FlowMLGPU(Param XParam, Loop<T>& XLoop, Forcing<float> X
 
 	if (!XForcing.Rain.inputfile.empty())
 	{
-		AddrainforcingImplicitGPU << < gridDim, blockDim, 0 >> > (XParam, XLoop, XModel.blocks, XForcing.Rain, XModel.evolv);
+		AddrainforcingImplicitGPU << < gridDim, blockDim, 0 >> > (XParam, XLoop, XModel.blocks, XForcing.Rain, XModel.evolv, XModel.cumrain);
 		CUDA_CHECK(cudaDeviceSynchronize());
 	}
 	

@@ -331,7 +331,7 @@ template <class T> void FlowGPU(Param XParam, Loop<T>& XLoop, Forcing<float> XFo
 
 	if (!XForcing.Rain.inputfile.empty())
 	{
-		AddrainforcingImplicitGPU <<< gridDim, blockDim, 0 >>> (XParam,XLoop, XModel.blocks, XForcing.Rain, XModel.evolv);
+		AddrainforcingImplicitGPU <<< gridDim, blockDim, 0 >>> (XParam,XLoop, XModel.blocks, XForcing.Rain, XModel.evolv, XModel.cumrain);
 		CUDA_CHECK(cudaDeviceSynchronize());
 	}
 
@@ -567,7 +567,7 @@ template <class T> void HalfStepGPU(Param XParam, Loop<T>& XLoop, Forcing<float>
 
 	if (!XForcing.Rain.inputfile.empty())
 	{
-		AddrainforcingImplicitGPU <<< gridDim, blockDim, 0 >>> (XParam, XLoop, XModel.blocks, XForcing.Rain, XModel.evolv);
+		AddrainforcingImplicitGPU <<< gridDim, blockDim, 0 >>> (XParam, XLoop, XModel.blocks, XForcing.Rain, XModel.evolv, XModel.cumrain);
 		CUDA_CHECK(cudaDeviceSynchronize());
 	}
 
