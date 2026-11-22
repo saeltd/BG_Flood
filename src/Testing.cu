@@ -26,6 +26,7 @@
  * Test 14 Test AOI bnds aswall to start with
  * Test 15 Flexible times reading
  * Test 16 Test Culverts
+ * Test 18 Initial + continuing loss amounts on a flat plate against the hand solution (GPU and CPU)
 
  * Test 99 Run all the test with test number < 99.
 
@@ -380,6 +381,22 @@ template <class T> bool Testing(Param XParam, Forcing<float> XForcing, Model<T> 
 		log("\t\tCulvert test : " + result);
 
 
+	}
+
+	if (mytest == 18)
+	{
+		/* Test 18: initial + continuing loss amounts on a flat plate against the hand solution (GPU if present, and CPU).
+		*/
+		log("\t### IL/CL loss amounts on a flat plate ###");
+		bool lossok = true;
+		if (XParam.GPUDEVICE >= 0)
+		{
+			lossok = Rainlossesplatetest<T>(0) && lossok;
+		}
+		lossok = Rainlossesplatetest<T>(-1) && lossok;
+		result = lossok ? "successful" : "failed";
+		log("\t\tIL/CL plate test : " + result);
+		isfailed = (!lossok || isfailed) ? true : false;
 	}
 
 	if (mytest == 993)
@@ -3992,6 +4009,123 @@ template <class T> bool Rainlossestest(T zsinit, int gpu, float alpha)
 
 	//log("#####");
 	return modelgood;
+}
+
+
+/**! \fn bool Rainlossesplatetest(int gpu)
+ * @brief	Initial + continuing loss on a closed flat plate against the hand solution
+ * Test 10 checks that water left + losses = rain, which also holds when the loss itself is wrong. This test checks the
+ * loss amounts. Rain 60 mm/h for 600 s (10 mm), IL 2 mm, CL 30 mm/h. Losses act on surface water: IL first, then CL
+ * on what is left in the step. IL fills at 120 s; from then on CL removes 30 mm/h of the 60 mm/h falling, so
+ * 4.0 mm is left on the plate and 6.0 mm is lost. Output every 5 s keeps the step <= 5 s, so the step in which IL
+ * fills adds at most CL x 5 s = 0.04 mm of extra loss.
+ * @param gpu GPU device to use (or -1 for CPU)
+ * @return true if the plate-mean depth and loss are both within 0.1 mm of the hand solution
+ */
+template <class T> bool Rainlossesplatetest(int gpu)
+{
+	log("#####");
+	Param XParam;
+	// 128 m x 128 m plate, 16 x 16 cells of 8 m (one block), dry start
+	XParam.dx = 8.0;
+	XParam.xo = 0.0;
+	XParam.yo = 0.0;
+	XParam.xmax = 128.0;
+	XParam.ymax = 128.0;
+	XParam.zsinit = -1.0;
+	XParam.infiltration = true;
+
+	XParam.endtime = 600.0;
+	XParam.outputtimestep = 5.0;
+	XParam.smallnc = 0;
+	XParam.outfile = "RainLossesPlate_test.nc";
+
+	XParam.cf = 0.01;
+	XParam.frictionmodel = 0;
+	XParam.rainforcing = true;
+	XParam.rainbnd = true;
+	XParam.GPUDEVICE = gpu;
+
+	std::vector<std::string> outv = { "h","hgw" };
+	XParam.outvars = outv;
+
+	Model<T> XModel;
+	Model<T> XModel_g;
+	Forcing<float> XForcing;
+	StaticForcingP<float> bathy;
+	XForcing.Bathy.push_back(bathy);
+	XForcing.Bathy[0].xo = -16.0;
+	XForcing.Bathy[0].yo = -16.0;
+	XForcing.Bathy[0].xmax = 144.0;
+	XForcing.Bathy[0].ymax = 144.0;
+	XForcing.Bathy[0].nx = 3;
+	XForcing.Bathy[0].ny = 3;
+	XForcing.Bathy[0].dx = 80.0;
+	XForcing.Bathy[0].dy = XForcing.Bathy[0].dx;
+	AllocateCPU(1, 1, XForcing.left.blks, XForcing.right.blks, XForcing.top.blks, XForcing.bot.blks);
+	AllocateCPU(XForcing.Bathy[0].nx, XForcing.Bathy[0].ny, XForcing.Bathy[0].val);
+	for (int i = 0; i < XForcing.Bathy[0].nx * XForcing.Bathy[0].ny; i++)
+	{
+		XForcing.Bathy[0].val[i] = 0.0f;
+	}
+	XForcing.right.type = 0;
+	XForcing.left.type = 0;
+	XForcing.top.type = 0;
+	XForcing.bot.type = 0;
+
+	// uniform rain 60 mm/h
+	std::ofstream rain_file("testrainlossplate.tmp", std::ios_base::out | std::ios_base::trunc);
+	rain_file << "0.0 60.0" << std::endl;
+	rain_file << "3600.0 60.0" << std::endl;
+	rain_file.close();
+	XForcing.Rain.inputfile = "testrainlossplate.tmp";
+	XForcing.Rain.uniform = true;
+	XForcing.Rain.unidata = readINfileUNI(XForcing.Rain.inputfile, XParam.reftime);
+
+	// uniform IL 2 mm and CL 30 mm/h as maps
+	const int NX = 11, NY = 11;
+	double xLoss[NX], yLoss[NY];
+	double ilForcing[NX * NY], clForcing[NX * NY];
+	for (int i = 0; i < NX; i++) { xLoss[i] = -16.0 + 16.0 * i; }
+	for (int j = 0; j < NY; j++) { yLoss[j] = -16.0 + 16.0 * j; }
+	for (int k = 0; k < NX * NY; k++) { ilForcing[k] = 2.0; clForcing[k] = 30.0; }
+	create2dnc("ilplateTemp.nc", NX, NY, xLoss, yLoss, ilForcing, "initialloss");
+	create2dnc("clplateTemp.nc", NX, NY, xLoss, yLoss, clForcing, "continuousloss");
+	XForcing.il = readfileinfo("ilplateTemp.nc", XForcing.il);
+	XForcing.il.varname = "initialloss";
+	XForcing.cl = readfileinfo("clplateTemp.nc", XForcing.cl);
+	XForcing.cl.varname = "continuousloss";
+	readstaticforcing(XForcing.il);
+	readstaticforcing(XForcing.cl);
+
+	checkparamsanity(XParam, XForcing);
+	InitMesh(XParam, XForcing, XModel);
+	InitialConditions(XParam, XForcing, XModel);
+	InitialAdaptation(XParam, XForcing, XModel);
+	SetupGPU(XParam, XModel, XForcing, XModel_g);
+
+	MainLoop(XParam, XForcing, XModel, XModel_g);
+
+	double hsum = 0.0, gsum = 0.0;
+	int n = 0;
+	for (int ibl = 0; ibl < XParam.nblk; ibl++)
+	{
+		int ib = XModel.blocks.active[ibl];
+		for (int iy = 0; iy < XParam.blkwidth; iy++)
+		{
+			for (int ix = 0; ix < (XParam.blkwidth); ix++)
+			{
+				int i = memloc(XParam, ix, iy, ib);
+				hsum += double(XModel.evolv.h[i]);
+				gsum += double(XModel.hgw[i]);
+				n++;
+			}
+		}
+	}
+	double hmm = 1000.0 * hsum / n, gmm = 1000.0 * gsum / n;
+	bool ok = std::abs(hmm - 4.0) < 0.1 && std::abs(gmm - 6.0) < 0.1;
+	log("\t\tIL/CL plate test (gpu " + std::to_string(gpu) + "): water left " + std::to_string(hmm) + " mm (hand 4.0), loss " + std::to_string(gmm) + " mm (hand 6.0) : " + (ok ? "successful" : "failed"));
+	return ok;
 }
 
 
