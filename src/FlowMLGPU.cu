@@ -85,6 +85,7 @@ template <class T> void FlowMLGPU(Param XParam, Loop<T>& XLoop, Forcing<float> X
 	// Timestep reduction
 	XLoop.dt = double(CalctimestepGPU(XParam, XLoop, XModel.blocks, XModel.time));
 	XLoop.dtmax = XLoop.dt;
+	ForcingMidstep(XParam, XLoop, XForcing); // rain rate at mid-step (dtforcing)
 
 	
 

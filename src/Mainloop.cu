@@ -39,6 +39,9 @@ template <class T> void MainLoop(Param &XParam, Forcing<float> XForcing, Model<T
 		// Calculate dynamic forcing at this step
 		updateforcing(XParam, XLoop, XForcing);
 
+		// Next rain/river breakpoint: the time step will end on it (dtforcing)
+		XLoop.nextforcingtime = NextForcingTime(XParam, XLoop, XForcing);
+
 		// Core engine
 		if (XParam.GPUDEVICE >= 0)
 		{

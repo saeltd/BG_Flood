@@ -40,6 +40,90 @@ template void updateforcing<float>(Param XParam, Loop<float> XLoop, Forcing<floa
 template void updateforcing<double>(Param XParam, Loop<double> XLoop, Forcing<float>& XForcing);
 
 
+/**
+ * @brief Next breakpoint of the rain and river time series after the current model time.
+ * Rain and river forcing are sampled once per step. If a step straddles a change in rate (e.g. the start of a burst
+ * on a dry domain, where the step can grow to minutes), the applied volume is wrong. CalctimestepGPU/CPU end the
+ * step on the time returned here, so the forcing is linear within every step, and ForcingMidstep() then applies its
+ * exact volume. Breakpoints within a small tolerance of the current time are skipped, so landing a fraction of a
+ * second short of one never forces a vanishing step.
+ * @param XParam Model parameters (dtforcing = 0 disables this and returns 1e30)
+ * @param XLoop Loop structure containing the current time
+ * @param XForcing Forcing data structure
+ * @return Time of the next breakpoint in s, or 1e30 if there is none
+ */
+template <class T> double NextForcingTime(Param XParam, Loop<T> XLoop, Forcing<float>& XForcing)
+{
+	double tnext = 1.0e30;
+	if (XParam.dtforcing <= 0)
+	{
+		return tnext;
+	}
+	double t = XLoop.totaltime + 1.0e-6 * std::max(std::abs(XLoop.totaltime), 1.0) + 1.0e-5;
+
+	if (!XForcing.Rain.inputfile.empty())
+	{
+		if (XForcing.Rain.uniform)
+		{
+			for (int k = 0; k < XForcing.Rain.unidata.size(); k++)
+			{
+				if (XForcing.Rain.unidata[k].time > t)
+				{
+					tnext = std::min(tnext, XForcing.Rain.unidata[k].time);
+					break;
+				}
+			}
+		}
+		else if (XForcing.Rain.dt > 0.0)
+		{
+			// rain maps: frames at to + k dt
+			double tk = XForcing.Rain.to + ceil((t - XForcing.Rain.to) / XForcing.Rain.dt) * XForcing.Rain.dt;
+			if (tk <= t)
+			{
+				tk = tk + XForcing.Rain.dt;
+			}
+			if (tk <= XForcing.Rain.to + (XForcing.Rain.nt - 1) * XForcing.Rain.dt + 1.0e-6)
+			{
+				tnext = std::min(tnext, tk);
+			}
+		}
+	}
+	for (int r = 0; r < XForcing.rivers.size(); r++)
+	{
+		for (int k = 0; k < XForcing.rivers[r].flowinput.size(); k++)
+		{
+			if (XForcing.rivers[r].flowinput[k].time > t)
+			{
+				tnext = std::min(tnext, XForcing.rivers[r].flowinput[k].time);
+				break;
+			}
+		}
+	}
+	return tnext;
+}
+template double NextForcingTime<float>(Param XParam, Loop<float> XLoop, Forcing<float>& XForcing);
+template double NextForcingTime<double>(Param XParam, Loop<double> XLoop, Forcing<float>& XForcing);
+
+
+/**
+ * @brief Re-sample uniform (time-series) rain at the middle of the step, once dt is known.
+ * With steps ending on the series breakpoints (NextForcingTime), the rain rate is linear within the step, so the
+ * mid-step rate x dt is the exact rain depth for the step. Map rain is still interpolated at the step start.
+ * @param XParam Model parameters (dtforcing = 0 keeps the step-start value)
+ * @param XLoop Loop structure with the current time and the step just computed
+ * @param XForcing Forcing data structure (Rain.nowvalue is updated)
+ */
+template <class T> void ForcingMidstep(Param XParam, Loop<T> XLoop, Forcing<float>& XForcing)
+{
+	if (XParam.dtforcing > 0 && !XForcing.Rain.inputfile.empty() && XForcing.Rain.uniform)
+	{
+		Forcingthisstep(XParam, double(XLoop.totaltime) + 0.5 * double(XLoop.dt), XForcing.Rain);
+	}
+}
+template void ForcingMidstep<float>(Param XParam, Loop<float> XLoop, Forcing<float>& XForcing);
+template void ForcingMidstep<double>(Param XParam, Loop<double> XLoop, Forcing<float>& XForcing);
+
+
 
 
 /**
@@ -62,18 +146,27 @@ void Forcingthisstep(Param XParam, double totaltime, DynForcingP<float> &XDynFor
 	{
 		//
 		int Rstepinbnd = 1;
+		int nlast = int(XDynForcing.unidata.size()) - 1;
 
-		// Do this for all the corners
-		//Needs limiter in case WLbnd is empty
-		double difft = XDynForcing.unidata[Rstepinbnd].time - totaltime;
-
-		while (difft < 0.0)
+		if (totaltime >= XDynForcing.unidata[nlast].time)
 		{
-			Rstepinbnd++;
-			difft = XDynForcing.unidata[Rstepinbnd].time - totaltime;
+			// past the end of the series: hold the last value (the search below used to read past the end of the data)
+			XDynForcing.nowvalue = XDynForcing.unidata[nlast].wspeed;
 		}
+		else
+		{
+			// Do this for all the corners
+			//Needs limiter in case WLbnd is empty
+			double difft = XDynForcing.unidata[Rstepinbnd].time - totaltime;
 
-		XDynForcing.nowvalue =interptime(XDynForcing.unidata[Rstepinbnd].wspeed, XDynForcing.unidata[Rstepinbnd - 1].wspeed, XDynForcing.unidata[Rstepinbnd].time - XDynForcing.unidata[Rstepinbnd - 1].time, totaltime - XDynForcing.unidata[Rstepinbnd - 1].time);
+			while (difft < 0.0)
+			{
+				Rstepinbnd++;
+				difft = XDynForcing.unidata[Rstepinbnd].time - totaltime;
+			}
+
+			XDynForcing.nowvalue = interptime(XDynForcing.unidata[Rstepinbnd].wspeed, XDynForcing.unidata[Rstepinbnd - 1].wspeed, XDynForcing.unidata[Rstepinbnd].time - XDynForcing.unidata[Rstepinbnd - 1].time, totaltime - XDynForcing.unidata[Rstepinbnd - 1].time);
+		}
 
 
 
@@ -148,19 +241,30 @@ template <class T> __host__ void AddRiverForcing(Param XParam, Loop<T> XLoop, st
 	dim3 gridDimRiver(XModel.bndblk.Riverinfo.nburmax, 1, 1);
 	dim3 blockDim(XParam.blkwidth, XParam.blkwidth, 1);
 	T qnow;
+	// dtforcing: sample the discharge at mid-step (steps end on the series breakpoints, so this is the exact step volume)
+	double tq = XLoop.totaltime + (XParam.dtforcing > 0 ? 0.5 * XLoop.dt : 0.0);
 	for (int Rin = 0; Rin < XRivers.size(); Rin++)
 	{
 		//
 		int bndstep = 0;
-		double difft = XRivers[Rin].flowinput[bndstep].time - XLoop.totaltime;
-		while (difft <= 0.0) // danger?
+		int nlast = int(XRivers[Rin].flowinput.size()) - 1;
+		if (tq >= XRivers[Rin].flowinput[nlast].time)
 		{
-			bndstep++;
-			difft = XRivers[Rin].flowinput[bndstep].time - XLoop.totaltime;
+			// past the end of the series: hold the last value (the search below used to read past the end of the data)
+			qnow = T(XRivers[Rin].flowinput[nlast].q);
+		}
+		else
+		{
+			double difft = XRivers[Rin].flowinput[bndstep].time - tq;
+			while (difft <= 0.0) // danger?
+			{
+				bndstep++;
+				difft = XRivers[Rin].flowinput[bndstep].time - tq;
+			}
+
+			qnow = T(interptime(XRivers[Rin].flowinput[bndstep].q, XRivers[Rin].flowinput[max(bndstep - 1, 0)].q, XRivers[Rin].flowinput[bndstep].time - XRivers[Rin].flowinput[max(bndstep - 1, 0)].time, tq - XRivers[Rin].flowinput[max(bndstep - 1, 0)].time));
 		}
 
-		qnow = T(interptime(XRivers[Rin].flowinput[bndstep].q, XRivers[Rin].flowinput[max(bndstep - 1, 0)].q, XRivers[Rin].flowinput[bndstep].time - XRivers[Rin].flowinput[max(bndstep - 1, 0)].time, XLoop.totaltime - XRivers[Rin].flowinput[max(bndstep - 1, 0)].time));
-		
 		XModel.bndblk.Riverinfo.qnow[Rin] = qnow / XRivers[Rin].disarea;
 	
 	}

@@ -26,6 +26,7 @@
  * Test 14 Test AOI bnds aswall to start with
  * Test 15 Flexible times reading
  * Test 16 Test Culverts
+ * Test 17 Rain time series applied in full on a dry domain (time steps end on the breakpoints, dtforcing)
 
  * Test 99 Run all the test with test number < 99.
 
@@ -380,6 +381,31 @@ template <class T> bool Testing(Param XParam, Forcing<float> XForcing, Model<T> 
 		log("\t\tCulvert test : " + result);
 
 
+	}
+
+	if (mytest == 17)
+	{
+		/* Test 17: a rain time series is applied in full on a dry domain.
+			The step ends on each breakpoint of the series and the rate is sampled at mid-step (dtforcing = 1).
+			Pass: applied volume within 0.2 % of the series, on GPU (if present) and CPU.
+			The dtforcing = 0 runs are reported for comparison only.
+		*/
+		log("\t### Rain time-series breakpoint test (dry start, burst at 60 s) ###");
+		bool breakok = true;
+		std::vector<int> devs = { -1 };
+		if (XParam.GPUDEVICE >= 0)
+		{
+			devs.insert(devs.begin(), 0);
+		}
+		for (int d : devs)
+		{
+			double r1 = RainBreakpointtest<T>(d, 1);
+			double r0 = RainBreakpointtest<T>(d, 0);
+			bool ok = std::abs(r1 - 1.0) < 0.002;
+			breakok = breakok && ok;
+			log("\t\tRain breakpoint test " + std::string(d >= 0 ? "GPU" : "CPU") + ": dtforcing 1 applies " + std::to_string(100.0 * r1) + " %, dtforcing 0 applies " + std::to_string(100.0 * r0) + " % : " + (ok ? "successful" : "failed"));
+		}
+		isfailed = (!breakok || isfailed) ? true : false;
 	}
 
 	if (mytest == 993)
@@ -3063,6 +3089,116 @@ template <class T> bool Raintest(T zsnit, int gpu, float alpha,int engine)
 
 	//log("#####");
 	return modelgood;
+}
+
+
+/**! \fn double RainBreakpointtest(int gpu, int dtforcing)
+ * @brief	Test that a rain time series is applied in full on a dry domain (time steps end on its breakpoints)
+ * Closed flat plate, dry at the start, so the time step grows by 1.5x per step to several seconds before the rain
+ * starts. The series is 0 until 60 s, ramps to 400 mm/h by 61 s, holds to 240 s and ramps back to 0 by 241 s, i.e.
+ * 20.0 mm. With dtforcing = 0 (behaviour up to v1.01) a step straddles the start of the burst and part of it is
+ * lost; with dtforcing = 1 the applied depth must match the series.
+ * @param gpu GPU device to use (or -1 for CPU)
+ * @param dtforcing value of the dtforcing parameter
+ * @return applied rain volume / rain volume in the series
+ */
+template <class T> double RainBreakpointtest(int gpu, int dtforcing)
+{
+	log("#####");
+	Param XParam;
+	// 128 m x 128 m plate, 16 x 16 cells of 8 m (one block): on a dry plate the step grows to tens of seconds
+	XParam.dx = 8.0;
+	XParam.xo = 0.0;
+	XParam.yo = 0.0;
+	XParam.xmax = 128.0;
+	XParam.ymax = 128.0;
+
+	XParam.zsinit = -1.0; // dry start (plate at 0 m)
+
+	XParam.endtime = 600.0;
+	XParam.outputtimestep = 600.0; // no output times near the rain breakpoints
+	XParam.smallnc = 0;
+	XParam.outfile = "RainBreakpoint_test.nc";
+
+	XParam.cf = 0.01;
+	XParam.frictionmodel = 0;
+
+	XParam.rainforcing = true;
+	XParam.rainbnd = true;
+	XParam.dtforcing = dtforcing;
+	XParam.GPUDEVICE = gpu;
+
+	std::vector<std::string> outv = { "zb","h","zs" };
+	XParam.outvars = outv;
+
+	Model<T> XModel;
+	Model<T> XModel_g;
+	Forcing<float> XForcing;
+	StaticForcingP<float> bathy;
+	XForcing.Bathy.push_back(bathy);
+
+	// flat bathymetry at 0 m
+	XForcing.Bathy[0].xo = -16.0;
+	XForcing.Bathy[0].yo = -16.0;
+	XForcing.Bathy[0].xmax = 144.0;
+	XForcing.Bathy[0].ymax = 144.0;
+	XForcing.Bathy[0].nx = 3;
+	XForcing.Bathy[0].ny = 3;
+	XForcing.Bathy[0].dx = 80.0;
+	XForcing.Bathy[0].dy = XForcing.Bathy[0].dx;
+	AllocateCPU(1, 1, XForcing.left.blks, XForcing.right.blks, XForcing.top.blks, XForcing.bot.blks);
+	AllocateCPU(XForcing.Bathy[0].nx, XForcing.Bathy[0].ny, XForcing.Bathy[0].val);
+	for (int i = 0; i < XForcing.Bathy[0].nx * XForcing.Bathy[0].ny; i++)
+	{
+		XForcing.Bathy[0].val[i] = 0.0f;
+	}
+
+	// closed domain
+	XForcing.right.type = 0;
+	XForcing.left.type = 0;
+	XForcing.top.type = 0;
+	XForcing.bot.type = 0;
+
+	// rain burst starting after 60 s of no rain
+	std::ofstream rain_file("testrainbreak.tmp", std::ios_base::out | std::ios_base::trunc);
+	rain_file << "0.0 0.0" << std::endl;
+	rain_file << "60.0 0.0" << std::endl;
+	rain_file << "61.0 400.0" << std::endl;
+	rain_file << "240.0 400.0" << std::endl;
+	rain_file << "241.0 0.0" << std::endl;
+	rain_file << "3600.0 0.0" << std::endl;
+	rain_file.close();
+	double TheoryInput = 400.0 / 1000.0 / 3600.0 * 180.0 * (XParam.xmax - XParam.xo) * (XParam.ymax - XParam.yo);
+
+	XForcing.Rain.inputfile = "testrainbreak.tmp";
+	XForcing.Rain.uniform = true;
+	XForcing.Rain.unidata = readINfileUNI(XForcing.Rain.inputfile, XParam.reftime);
+
+	checkparamsanity(XParam, XForcing);
+	InitMesh(XParam, XForcing, XModel);
+	InitialConditions(XParam, XForcing, XModel);
+	InitialAdaptation(XParam, XForcing, XModel);
+	SetupGPU(XParam, XModel, XForcing, XModel_g);
+
+	MainLoop(XParam, XForcing, XModel, XModel_g);
+
+	double SimulatedVolume = 0.0;
+	for (int ibl = 0; ibl < XParam.nblk; ibl++)
+	{
+		int ib = XModel.blocks.active[ibl];
+		double delta = calcres(XParam.delta, XModel.blocks.level[ib]);
+		for (int iy = 0; iy < XParam.blkwidth; iy++)
+		{
+			for (int ix = 0; ix < (XParam.blkwidth); ix++)
+			{
+				int i = memloc(XParam, ix, iy, ib);
+				SimulatedVolume = SimulatedVolume + double(XModel.evolv.h[i]) * delta * delta;
+			}
+		}
+	}
+	double ratio = SimulatedVolume / TheoryInput;
+	log("\t\tRain breakpoint test (gpu " + std::to_string(gpu) + ", dtforcing " + std::to_string(dtforcing) + "): applied " + std::to_string(SimulatedVolume) + " m3 of " + std::to_string(TheoryInput) + " m3, ratio " + std::to_string(ratio));
+	return ratio;
 }
 
 

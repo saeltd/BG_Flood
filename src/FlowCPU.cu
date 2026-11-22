@@ -110,6 +110,7 @@ template <class T> void FlowCPU(Param XParam, Loop<T>& XLoop,Forcing<float> XFor
 	// Reduce minimum timestep
 	XLoop.dt = double(CalctimestepCPU(XParam,XLoop, XModel.blocks, XModel.time));
 	XLoop.dtmax = XLoop.dt;
+	ForcingMidstep(XParam, XLoop, XForcing); // rain rate at mid-step (dtforcing)
 	XModel.time.dt = T(XLoop.dt);
 
 
@@ -367,6 +368,7 @@ template <class T> void HalfStepCPU(Param XParam, Loop<T>& XLoop, Forcing<float>
 	// Reduce minimum timestep
 	XLoop.dt = double(CalctimestepCPU(XParam, XLoop, XModel.blocks, XModel.time));
 	XLoop.dtmax = XLoop.dt;
+	ForcingMidstep(XParam, XLoop, XForcing); // rain rate at mid-step (dtforcing)
 	XModel.time.dt = T(XLoop.dt);
 
 

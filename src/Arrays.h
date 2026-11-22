@@ -380,6 +380,7 @@ struct Loop
 	double dt;
 	double dtmax;
 	double totaltime;
+	double nextforcingtime = 1.0e30; // next rain/river time-series breakpoint; time steps end on it (Param dtforcing)
 	
 
 	// Needed to average mean varable for output

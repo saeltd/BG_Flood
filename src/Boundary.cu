@@ -130,16 +130,25 @@ template <class T> void FlowbndFlux(Param XParam, double totaltime, BlockP<T> XB
 		if (bndseg.uniform)
 		{
 			int SLstepinbnd = 1;
+			int nlast = int(bndseg.data.size()) - 1;
 
-			double difft = bndseg.data[SLstepinbnd].time - totaltime;
-			while (difft < 0.0)
+			if (totaltime >= bndseg.data[nlast].time)
 			{
-				SLstepinbnd++;
-				difft = bndseg.data[SLstepinbnd].time - totaltime;
+				// past the end of the series: hold the last value (the search below used to read past the end of the data)
+				zsbnd = bndseg.data[nlast].wspeed;
 			}
+			else
+			{
+				double difft = bndseg.data[SLstepinbnd].time - totaltime;
+				while (difft < 0.0)
+				{
+					SLstepinbnd++;
+					difft = bndseg.data[SLstepinbnd].time - totaltime;
+				}
 
-			//itime = SLstepinbnd - 1.0 + (totaltime - bndseg.data[SLstepinbnd - 1].time) / (bndseg.data[SLstepinbnd].time - bndseg.data[SLstepinbnd - 1].time);
-			zsbnd = interptime(bndseg.data[SLstepinbnd].wspeed, bndseg.data[SLstepinbnd - 1].wspeed, bndseg.data[SLstepinbnd].time - bndseg.data[SLstepinbnd - 1].time, totaltime - bndseg.data[SLstepinbnd - 1].time);
+				//itime = SLstepinbnd - 1.0 + (totaltime - bndseg.data[SLstepinbnd - 1].time) / (bndseg.data[SLstepinbnd].time - bndseg.data[SLstepinbnd - 1].time);
+				zsbnd = interptime(bndseg.data[SLstepinbnd].wspeed, bndseg.data[SLstepinbnd - 1].wspeed, bndseg.data[SLstepinbnd].time - bndseg.data[SLstepinbnd - 1].time, totaltime - bndseg.data[SLstepinbnd - 1].time);
+			}
 
 
 			
@@ -230,16 +239,25 @@ template <class T> void FlowbndFluxML(Param XParam, double totaltime, BlockP<T> 
 		if (bndseg.uniform)
 		{
 			int SLstepinbnd = 1;
+			int nlast = int(bndseg.data.size()) - 1;
 
-			double difft = bndseg.data[SLstepinbnd].time - totaltime;
-			while (difft < 0.0)
+			if (totaltime >= bndseg.data[nlast].time)
 			{
-				SLstepinbnd++;
-				difft = bndseg.data[SLstepinbnd].time - totaltime;
+				// past the end of the series: hold the last value (the search below used to read past the end of the data)
+				zsbnd = bndseg.data[nlast].wspeed;
 			}
+			else
+			{
+				double difft = bndseg.data[SLstepinbnd].time - totaltime;
+				while (difft < 0.0)
+				{
+					SLstepinbnd++;
+					difft = bndseg.data[SLstepinbnd].time - totaltime;
+				}
 
-			//itime = SLstepinbnd - 1.0 + (totaltime - bndseg.data[SLstepinbnd - 1].time) / (bndseg.data[SLstepinbnd].time - bndseg.data[SLstepinbnd - 1].time);
-			zsbnd = interptime(bndseg.data[SLstepinbnd].wspeed, bndseg.data[SLstepinbnd - 1].wspeed, bndseg.data[SLstepinbnd].time - bndseg.data[SLstepinbnd - 1].time, totaltime - bndseg.data[SLstepinbnd - 1].time);
+				//itime = SLstepinbnd - 1.0 + (totaltime - bndseg.data[SLstepinbnd - 1].time) / (bndseg.data[SLstepinbnd].time - bndseg.data[SLstepinbnd - 1].time);
+				zsbnd = interptime(bndseg.data[SLstepinbnd].wspeed, bndseg.data[SLstepinbnd - 1].wspeed, bndseg.data[SLstepinbnd].time - bndseg.data[SLstepinbnd - 1].time, totaltime - bndseg.data[SLstepinbnd - 1].time);
+			}
 
 
 			if (XParam.bndtaper > 0.0)
