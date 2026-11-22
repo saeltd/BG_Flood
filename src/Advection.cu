@@ -500,36 +500,13 @@ template __host__ float timestepreductionCPU(Param XParam, Loop<float> XLoop, Bl
 template __host__ double timestepreductionCPU(Param XParam, Loop<double> XLoop, BlockP<double> XBlock, TimeP<double> XTime);
 
 /**
- * @brief Limit the time step by the user maximum (dtmax) and end it on the next rain/river breakpoint (dtforcing).
- * Without this, a step on a dry or nearly dry domain can straddle a change in rain rate by tens of seconds or more,
- * and the forcing (sampled once per step) is applied at the wrong rate for that whole step.
- * @tparam T Data type
- * @param XParam Model parameters
- * @param XLoop Loop control structure (nextforcingtime, totaltime)
- * @param dt Time step from the CFL reduction
- * @return Limited time step
- */
-template <class T> __host__ T CapTimestep(Param XParam, Loop<T> XLoop, T dt)
-{
-	// optional user limit on the time step
-	if (XParam.dtmax > 0.0 && dt > XParam.dtmax)
-	{
-		dt = T(XParam.dtmax);
-	}
-	// end the step on the next rain/river breakpoint (equal steps up to it, as for output times)
-	double tf = XLoop.nextforcingtime - XLoop.totaltime;
-	if (tf > 0.0 && tf < 1.0e20)
-	{
-		dt = T(tf / ceil(tf / double(dt)));
-	}
-	return dt;
-}
-template __host__ float CapTimestep<float>(Param XParam, Loop<float> XLoop, float dt);
-template __host__ double CapTimestep<double>(Param XParam, Loop<double> XLoop, double dt);
-
-/**
- * @brief Final time step: CapTimestep (dtmax, rain/river breakpoints), then equal steps up to the next output time.
- * Shared by CalctimestepCPU and CalctimestepGPU (and unit test 22).
+ * @brief Final time step: user limit (dtmax), then equal steps up to the next output time or the next rain/river
+ * breakpoint (dtforcing), whichever comes first. Shared by CalctimestepCPU and CalctimestepGPU (and unit test 22).
+ * Ending steps on the breakpoints matters on a dry or nearly dry domain, where a step can otherwise straddle a change
+ * in rain or river rate by tens of seconds or more, and the forcing is applied at the wrong rate for that whole step.
+ * The division is done once, to the nearer target. Dividing to the breakpoint and then again to the output time
+ * shortened the step and left it short of the breakpoint, followed by a sliver step (EA Test 3 stopped on dtmin).
+ * With dtforcing = 0 this is the v1.01 output-time rule.
  * @tparam T Data type
  * @param XParam Model parameters
  * @param XLoop Loop control structure (nextoutputtime, nextforcingtime, totaltime)
@@ -538,11 +515,21 @@ template __host__ double CapTimestep<double>(Param XParam, Loop<double> XLoop, d
  */
 template <class T> __host__ T LandTimestep(Param XParam, Loop<T> XLoop, T dt)
 {
-	dt = CapTimestep(XParam, XLoop, dt);
-
-	if (ceil((XLoop.nextoutputtime - XLoop.totaltime) / dt) > 0.0)
+	// optional user limit on the time step
+	if (XParam.dtmax > 0.0 && dt > XParam.dtmax)
 	{
-		dt = T((XLoop.nextoutputtime - XLoop.totaltime) / ceil((XLoop.nextoutputtime - XLoop.totaltime) / dt));
+		dt = T(XParam.dtmax);
+	}
+	double tgo = XLoop.nextoutputtime - XLoop.totaltime;
+	double tgf = XLoop.nextforcingtime - XLoop.totaltime; // 1e30 when dtforcing = 0 or no breakpoint is left
+	double tg = tgo;
+	if (tgf > 0.0 && tgf < 1.0e20 && (tgf < tgo || !(tgo > 0.0)))
+	{
+		tg = tgf;
+	}
+	if (tg > 0.0)
+	{
+		dt = T(tg / ceil(tg / double(dt)));
 	}
 	return dt;
 }
