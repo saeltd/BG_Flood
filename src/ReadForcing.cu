@@ -1827,6 +1827,7 @@ template<class T> T readforcinghead(T ForcingParam)
 			//
 			//log("asc file");
 			readbathyASCHead(ForcingParam.inputfile, ForcingParam.nx, ForcingParam.ny, ForcingParam.dx, ForcingParam.xo, ForcingParam.yo, ForcingParam.grdalpha);
+			ForcingParam.dy = ForcingParam.dx; // asc cells are square; dy was left at 0 and the bilinear interpolation divided by it
 			ForcingParam.xmax = ForcingParam.xo + (ForcingParam.nx-1)* ForcingParam.dx;
 			ForcingParam.ymax = ForcingParam.yo + (ForcingParam.ny-1)* ForcingParam.dx;
 
@@ -2080,7 +2081,7 @@ void readbathyASCHead(std::string filename, int &nx, int &ny, double &dx, double
 	//std::getline(fs, line);
 	int linehead = 0;
 
-	bool pixelreg = true;
+	bool corner = false; // xllcorner/yllcorner give the outer corner: shift to the first cell centre below
 
 	while (linehead < 6)
 	{
@@ -2101,7 +2102,8 @@ void readbathyASCHead(std::string filename, int &nx, int &ny, double &dx, double
 
 
 			left = trim(lineelements[0], " ");
-			right = lineelements[1]; 
+			std::transform(left.begin(), left.end(), left.begin(), ::tolower); // header keywords are case-insensitive (NCOLS, XLLCORNER, ...)
+			right = lineelements[1];
 			//printf("left: %s ;right: %s\n", left.c_str(), right.c_str());
 			//found = left.compare("ncols");// it needs to strictly compare
 			if (left.compare("ncols") == 0) // found the parameter
@@ -2135,34 +2137,32 @@ void readbathyASCHead(std::string filename, int &nx, int &ny, double &dx, double
 			}
 			if (left.compare("yllcenter") == 0) // found the parameter
 			{
-				pixelreg = false;
 				//
 				yo = std::stod(right);
 
 			}
-			//if gridnode registration this should happen
+			// corner registration: shifted to the cell centre once dx is known (below)
 			if (left.compare("xllcorner") == 0) // found the parameter
 			{
-				pixelreg = false;
+				corner = true;
 				//
 				xo = std::stod(right);
 
 			}
 			if (left.compare("yllcorner") == 0) // found the parameter
 			{
-
+				corner = true;
 				//
 				yo = std::stod(right);
-				//This should be:
-				//yo = std::stod(right) + dx / 2.0;
-				//but by the time xo and yo are found dx has not been setup... awkward...
 
 			}
 			linehead++;
 		}
 	}
 
-	if (!pixelreg)
+	// BG works with cell-centre coordinates. Previously the flag was set by yllcenter and xllcorner, so a
+	// centre-registered file (xllcenter/yllcenter) was also shifted by half a cell.
+	if (corner)
 	{
 		xo = xo + 0.5 * dx;
 		yo = yo + 0.5 * dx;
